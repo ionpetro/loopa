@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { DemoJob } from "./types";
+import type { DemoJob } from "./types.ts";
 
 export const DATA_DIR = path.join(process.cwd(), "data");
 

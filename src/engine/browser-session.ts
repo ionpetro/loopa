@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { chromium, type Browser, type CDPSession, type Locator, type Page } from "playwright-core";
-import { createKernelBrowser, deleteKernelBrowser } from "./kernel";
-import type { ActionResult, BrowserAction, FrameRef, Observation } from "./types";
+import { createKernelBrowser, deleteKernelBrowser } from "./kernel.ts";
+import type { ActionResult, BrowserAction, FrameRef, Observation } from "./types.ts";
 
 const MAX_FRAMES = 4000; // ~5-6 min of screencast at ~10fps — runaway-job backstop
 

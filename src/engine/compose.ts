@@ -2,8 +2,8 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { Overlays } from "./browser-session";
-import type { FrameRef, TimedCaption } from "./types";
+import type { Overlays } from "./browser-session.ts";
+import type { FrameRef, TimedCaption } from "./types.ts";
 
 const ff = (args: string[], cwd: string) =>
   execFileSync("ffmpeg", ["-y", "-loglevel", "error", ...args], { cwd, stdio: ["ignore", "ignore", "inherit"] });

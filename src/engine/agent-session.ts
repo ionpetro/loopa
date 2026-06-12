@@ -2,12 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { EventEmitter } from "node:events";
 import { Agent, type SDKAgent } from "@cursor/sdk";
-import { BrowserSession, observationText } from "./browser-session";
-import { composeVideo } from "./compose";
-import { createJob, jobDir } from "./jobs";
+import { BrowserSession, observationText } from "./browser-session.ts";
+import { composeVideo } from "./compose.ts";
+import { createJob, jobDir } from "./jobs.ts";
 import type {
   BrowserAction, DemoJob, DemoParams, Observation, Recipe, RecipeStep, SessionEvent, TimedCaption,
-} from "./types";
+} from "./types.ts";
 
 const MAX_ACTIONS = 24;
 const OUTPUT = { fps: 30, width: 1280, height: 720, quality: 60 };
