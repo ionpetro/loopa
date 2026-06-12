@@ -218,8 +218,13 @@ export class BrowserSession {
     const hesc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     await this.page.setViewportSize({ width: spec.W, height: spec.H }).catch(() => {});
     await this.page.setContent(
-      "<html><head><meta charset='utf8'><style>*{margin:0;box-sizing:border-box;font-family:Arial,Helvetica,sans-serif}body{background:transparent}</style></head><body><div id='stage'></div></body></html>",
+      "<html><head><meta charset='utf8'><link rel='preconnect' href='https://fonts.gstatic.com' crossorigin><link rel='stylesheet' href='https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;800&display=swap'><style>*{margin:0;box-sizing:border-box;font-family:'Poppins',Arial,Helvetica,sans-serif}body{background:transparent}</style></head><body><div id='stage'></div></body></html>",
     );
+    await this.page
+      .evaluate(() =>
+        Promise.all(["400", "600", "800"].map((w) => document.fonts.load(`${w} 30px Poppins`))),
+      )
+      .catch(() => {});
     const shot = async (html: string): Promise<string> => {
       await this.page.evaluate((h) => { document.getElementById("stage")!.innerHTML = h; }, html);
       const el = await this.page.$("#x");

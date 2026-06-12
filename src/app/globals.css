@@ -70,7 +70,7 @@
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
   --font-sans: var(--font-poppins), ui-sans-serif, sans-serif;
-  --font-mono: var(--font-jbm), ui-monospace, monospace;
+  --font-mono: var(--font-poppins), ui-sans-serif, sans-serif;
   --font-display: var(--font-poppins), ui-sans-serif, sans-serif;
 }
 

@@ -86,7 +86,7 @@ export default function Home() {
     <div className="flex h-screen">
       {/* ── producer rail ───────────────────────────────────────────── */}
       <aside className="flex w-105 shrink-0 flex-col border-r bg-background">
-        <header className="flex items-baseline justify-between border-b px-5 py-4">
+        <header className="flex h-14 shrink-0 items-center justify-between border-b px-5">
           <div className="font-display text-xl tracking-tight">
             demo<span className="text-rec">·</span>studio
           </div>
@@ -141,7 +141,7 @@ export default function Home() {
 
       {/* ── stage ───────────────────────────────────────────────────── */}
       <main className="flex min-w-0 flex-1 flex-col bg-[oklch(0.115_0.01_285)]">
-        <div className="flex items-center justify-between border-b px-5 py-3 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+        <div className="flex h-14 shrink-0 items-center justify-between border-b px-5 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
           <span className={cn("flex items-center gap-2", recording && "text-rec")}>
             <span className={cn("size-2 rounded-full bg-current", recording && "rec-dot")} />
             {recording ? "rec" : stage.mode === "done" ? "wrap" : "standby"}
