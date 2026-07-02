@@ -1,5 +1,6 @@
 "use client";
 
+import { useAuth } from "@clerk/nextjs";
 import { apiUrl } from "@/lib/api-base";
 import { useCallback, useRef, useState } from "react";
 
@@ -79,6 +80,7 @@ export function useDemoSession() {
 
   const sessionIdRef = useRef<string | null>(null);
   const busyRef = useRef(false);
+  const { getToken } = useAuth();
 
   const pushAssistantPart = useCallback((part: ChatPart) => {
     setMessages((ms) => {
@@ -162,9 +164,13 @@ export function useDemoSession() {
       const sessionId = sessionIdRef.current ??= newSessionId();
 
       try {
+        const token = await getToken().catch(() => null);
         const res = await fetch(apiUrl(`/api/session/${sessionId}`), {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
           body: JSON.stringify({ message }),
         });
 
@@ -185,7 +191,7 @@ export function useDemoSession() {
         throw err;
       }
     },
-    [handleEvent],
+    [handleEvent, getToken],
   );
 
   return { messages, busy, stage, setStage, ticks, error, recStart, send };

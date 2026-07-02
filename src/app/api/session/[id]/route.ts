@@ -1,3 +1,4 @@
+import { auth } from "@clerk/nextjs/server";
 import { getOrCreateSession } from "@/engine/agent-session";
 import type { SessionEvent } from "@/engine/types";
 
@@ -39,7 +40,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return jsonError("message required", 400);
   }
 
+  const { userId } = await auth();
+  if (!userId) return jsonError("sign in required", 401);
+
   const session = getOrCreateSession(id);
+  session.setUser(userId);
   if (session.isBusy) return jsonError("agent is busy", 409);
 
   const stream = new ReadableStream({

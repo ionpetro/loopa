@@ -1,3 +1,5 @@
+import { ClerkProvider } from "@clerk/nextjs";
+import { shadcn } from "@clerk/ui/themes";
 import type { Metadata } from "next";
 import { Poppins } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -18,8 +20,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className="dark">
       <body className={`${poppins.variable} font-sans antialiased`}>
-        <TooltipProvider>{children}</TooltipProvider>
-        <div className="grain" aria-hidden />
+        <ClerkProvider appearance={{ theme: shadcn }}>
+          <TooltipProvider>{children}</TooltipProvider>
+          <div className="grain" aria-hidden />
+        </ClerkProvider>
       </body>
     </html>
   );

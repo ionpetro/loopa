@@ -1,5 +1,6 @@
 "use client";
 
+import { Show, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
 import { Fragment, useEffect, useState } from "react";
 import { CheckIcon, ClapperboardIcon, CopyIcon, DownloadIcon, RotateCcwIcon, VideoIcon } from "lucide-react";
 
@@ -130,8 +131,21 @@ export default function Home() {
           <div className="font-display text-xl tracking-tight">
             demo<span className="text-rec">·</span>studio
           </div>
-          <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-            producer line
+          <div className="flex items-center gap-3">
+            <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+              producer line
+            </div>
+            <Show when="signed-out">
+              <SignInButton>
+                <Button size="sm" variant="outline">sign in</Button>
+              </SignInButton>
+              <SignUpButton>
+                <Button size="sm">sign up</Button>
+              </SignUpButton>
+            </Show>
+            <Show when="signed-in">
+              <UserButton />
+            </Show>
           </div>
         </header>
 
