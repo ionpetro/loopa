@@ -53,7 +53,27 @@ export function startDemoRun(goal: string, startUrl: string): DemoRun {
   runs.set(id, run);
   persistRun(run);
 
+  // Watchdog: an agent stream can hang mid-run (observed in prod), leaving the
+  // run stuck in "recording" with a live cloud browser leaking. If no event
+  // arrives for STALL_MS, fail the run and tear the session down.
+  const STALL_MS = 5 * 60_000;
+  let lastEventAt = Date.now();
+  const watchdog = setInterval(() => {
+    if (run.status === "done" || run.status === "error") {
+      clearInterval(watchdog);
+      return;
+    }
+    if (Date.now() - lastEventAt > STALL_MS) {
+      clearInterval(watchdog);
+      run.status = "error";
+      run.error = `run stalled — no agent activity for ${Math.round(STALL_MS / 60_000)} minutes`;
+      persistRun(run);
+      void session.dispose().catch(() => {});
+    }
+  }, 30_000);
+
   const unsubscribe = session.subscribe((ev: SessionEvent) => {
+    lastEventAt = Date.now();
     if (ev.type === "job_created") {
       run.jobId = ev.jobId;
       run.status = "recording";
@@ -81,6 +101,7 @@ export function startDemoRun(goal: string, startUrl: string): DemoRun {
       run.error = err instanceof Error ? err.message : String(err);
     })
     .finally(() => {
+      clearInterval(watchdog);
       unsubscribe();
       if (run.status !== "done") {
         run.status = "error";
