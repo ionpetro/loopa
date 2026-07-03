@@ -40,6 +40,30 @@ Do all of this in this single turn:
 
 If an action fails, recover once and keep going; if the demo cannot be completed, call finish_demo anyway so a partial video is produced.`;
 
+/**
+ * One headless run at a time. Three concurrent runs on the shared-cpu-1x box
+ * starved everything (26-minute recordings, encodes at ~2%/min, watchdog
+ * "stalled" errors across the board — observed in prod overnight). Queued
+ * runs sit in "planning" until a slot frees; pollers just see planning.
+ */
+const MAX_CONCURRENT_RUNS = 1;
+let activeRuns = 0;
+const runQueue: (() => void)[] = [];
+
+function acquireRunSlot(): Promise<void> {
+  if (activeRuns < MAX_CONCURRENT_RUNS) {
+    activeRuns++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => runQueue.push(resolve));
+}
+
+function releaseRunSlot(): void {
+  const next = runQueue.shift();
+  if (next) next();
+  else activeRuns--;
+}
+
 export function startDemoRun(goal: string, startUrl: string): DemoRun {
   const url = new URL(startUrl); // throws on invalid URL
   if (url.protocol !== "https:" && url.protocol !== "http:") {
@@ -50,7 +74,15 @@ export function startDemoRun(goal: string, startUrl: string): DemoRun {
   const run: DemoRun = { id, goal, startUrl, status: "planning", actions: [], createdAt: Date.now() };
   runs.set(id, run);
   persistRun(run);
-  void executeRun(run);
+  void (async () => {
+    await acquireRunSlot();
+    try {
+      // May have been failed while queued (e.g. shutdown's failAllActiveRuns).
+      if ((run.status as RunStatus) !== "error") await executeRun(run);
+    } finally {
+      releaseRunSlot();
+    }
+  })();
   return run;
 }
 

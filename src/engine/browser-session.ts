@@ -248,34 +248,53 @@ export class BrowserSession {
     }
   }
 
-  /** Render caption/brand cards as transparent PNGs using the (now idle) page. */
+  /**
+   * Render caption/brand cards as transparent PNGs on a FRESH page — never the
+   * recorded one, which can be left unstable by wherever the demo ended
+   * (pending navigations, dialogs, SPA re-renders; seen in prod as a 30s
+   * "waiting for element to be stable" screenshot timeout).
+   */
   async renderOverlays(spec: OverlaySpec): Promise<Overlays> {
     const hesc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    await this.page.setViewportSize({ width: spec.W, height: spec.H }).catch(() => {});
-    await this.page.setContent(
-      "<html><head><meta charset='utf8'><link rel='preconnect' href='https://fonts.gstatic.com' crossorigin><link rel='stylesheet' href='https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;800&display=swap'><style>*{margin:0;box-sizing:border-box;font-family:'Poppins',Arial,Helvetica,sans-serif}body{background:transparent}</style></head><body><div id='stage'></div></body></html>",
-    );
-    await this.page
-      .evaluate(() =>
-        Promise.all(["400", "600", "800"].map((w) => document.fonts.load(`${w} 30px Poppins`))),
-      )
-      .catch(() => {});
-    const shot = async (html: string): Promise<string> => {
-      await this.page.evaluate((h) => { document.getElementById("stage")!.innerHTML = h; }, html);
-      const el = await this.page.$("#x");
-      const b = await el!.screenshot({ omitBackground: true, type: "png" });
-      return b.toString("base64");
-    };
-    const caps: string[] = [];
-    for (const t of spec.captions) {
-      caps.push(await shot(
-        `<div id='x' style="display:inline-block;background:rgba(10,10,18,.74);color:#fff;font-size:30px;font-weight:600;padding:14px 26px;border-radius:14px;max-width:1080px;line-height:1.3">${hesc(t)}</div>`,
-      ));
+    // 1x1 transparent PNG — stands in for a card that failed to render so
+    // caption indexes stay aligned and one bad card can't kill the video.
+    const BLANK =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+    const page = await this.page.context().newPage();
+    try {
+      await page.setViewportSize({ width: spec.W, height: spec.H }).catch(() => {});
+      await page.setContent(
+        "<html><head><meta charset='utf8'><link rel='preconnect' href='https://fonts.gstatic.com' crossorigin><link rel='stylesheet' href='https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;800&display=swap'><style>*{margin:0;box-sizing:border-box;font-family:'Poppins',Arial,Helvetica,sans-serif}body{background:transparent}</style></head><body><div id='stage'></div></body></html>",
+      );
+      await page
+        .evaluate(() =>
+          Promise.all(["400", "600", "800"].map((w) => document.fonts.load(`${w} 30px Poppins`))),
+        )
+        .catch(() => {});
+      const shot = async (html: string): Promise<string> => {
+        try {
+          await page.evaluate((h) => { document.getElementById("stage")!.innerHTML = h; }, html);
+          const el = await page.$("#x");
+          const b = await el!.screenshot({ omitBackground: true, type: "png", timeout: 10_000 });
+          return b.toString("base64");
+        } catch (err) {
+          console.error("[overlays] card render failed, using blank:", err instanceof Error ? err.message.split("\n")[0] : err);
+          return BLANK;
+        }
+      };
+      const caps: string[] = [];
+      for (const t of spec.captions) {
+        caps.push(await shot(
+          `<div id='x' style="display:inline-block;background:rgba(10,10,18,.74);color:#fff;font-size:30px;font-weight:600;padding:14px 26px;border-radius:14px;max-width:1080px;line-height:1.3">${hesc(t)}</div>`,
+        ));
+      }
+      const brand = spec.brand
+        ? await shot(`<div id='x' style="color:rgba(255,255,255,.85);font-size:24px;font-weight:800;letter-spacing:1.5px">${hesc(spec.brand)}</div>`)
+        : null;
+      return { caps, brand: brand === BLANK ? null : brand };
+    } finally {
+      await page.close().catch(() => {});
     }
-    const brand = spec.brand
-      ? await shot(`<div id='x' style="color:rgba(255,255,255,.85);font-size:24px;font-weight:800;letter-spacing:1.5px">${hesc(spec.brand)}</div>`)
-      : null;
-    return { caps, brand };
   }
 
   async close(): Promise<void> {

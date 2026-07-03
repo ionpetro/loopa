@@ -67,12 +67,23 @@ export interface ComposeResult {
   frameCount: number;
 }
 
+// One encode at a time: two concurrent ffmpeg runs starve the 1GB box —
+// observed in prod as encodes crawling at ~2%/min, health checks flapping,
+// and one encode getting OOM-killed ("ffmpeg exited with null").
+let encodeQueue: Promise<unknown> = Promise.resolve();
+
 /**
  * Stitch screencast frames into a captioned, branded MP4.
  * Inter-frame duration is capped at 1.6s — the screencast only emits frames
  * when pixels change, so long agent "thinking" pauses collapse automatically.
  */
-export async function composeVideo(input: ComposeInput): Promise<ComposeResult> {
+export function composeVideo(input: ComposeInput): Promise<ComposeResult> {
+  const result = encodeQueue.then(() => composeVideoNow(input));
+  encodeQueue = result.catch(() => {});
+  return result;
+}
+
+async function composeVideoNow(input: ComposeInput): Promise<ComposeResult> {
   const { frames, captions, overlays, outDir } = input;
   const W = input.width, H = input.height, FPS = input.fps;
   if (!frames.length) throw new Error("no frames captured");
