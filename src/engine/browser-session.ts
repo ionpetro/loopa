@@ -25,7 +25,12 @@ const CURSOR_SCRIPT = `(() => {
   const c = document.createElement("div");
   c.id = "__cursor";
   c.style.cssText = "position:fixed;top:-60px;left:-60px;width:28px;height:28px;margin:-3px 0 0 -3px;z-index:2147483647;pointer-events:none;filter:drop-shadow(0 1px 2px rgba(0,0,0,.55));";
-  c.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="100%" height="100%" fill="#fff" stroke="#1a1a1a" stroke-width="1.5" stroke-linejoin="round"><path d="M9.80282 4.62973L15.8364 6.99069C19.3164 8.35243 21.0564 9.03329 20.9987 10.1133C20.941 11.1934 19.1251 11.6886 15.4933 12.6791C14.412 12.974 13.8713 13.1215 13.4964 13.4963C13.1215 13.8712 12.9741 14.4119 12.6791 15.4933C11.6887 19.125 11.1934 20.9409 10.1134 20.9986C9.03335 21.0563 8.35249 19.3163 6.99075 15.8363L4.62979 9.80276C3.20411 6.15934 2.49127 4.33764 3.41448 3.41442C4.3377 2.49121 6.15941 3.20405 9.80282 4.62973Z"></path></svg>';
+  c.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="100%" height="100%" fill="#6d5cff" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"><path d="M9.80282 4.62973L15.8364 6.99069C19.3164 8.35243 21.0564 9.03329 20.9987 10.1133C20.941 11.1934 19.1251 11.6886 15.4933 12.6791C14.412 12.974 13.8713 13.1215 13.4964 13.4963C13.1215 13.8712 12.9741 14.4119 12.6791 15.4933C11.6887 19.125 11.1934 20.9409 10.1134 20.9986C9.03335 21.0563 8.35249 19.3163 6.99075 15.8363L4.62979 9.80276C3.20411 6.15934 2.49127 4.33764 3.41448 3.41442C4.3377 2.49121 6.15941 3.20405 9.80282 4.62973Z"></path></svg>';
+  // Multiplayer-style name tag riding with the cursor (matches the arrow tint).
+  const tag = document.createElement("div");
+  tag.textContent = "demo";
+  tag.style.cssText = "position:absolute;left:19px;top:22px;background:#6d5cff;color:#fff;font:600 13px/1 system-ui,-apple-system,sans-serif;padding:5px 11px;border-radius:999px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.3)";
+  c.appendChild(tag);
   const add = () => { if (document.body && !document.getElementById("__cursor")) document.body.appendChild(c); };
   add();
   const pc = new PC((pt) => { c.style.left = pt[0] + "px"; c.style.top = pt[1] + "px"; });
@@ -299,7 +304,7 @@ export class BrowserSession {
       const caps: string[] = [];
       for (const t of spec.captions) {
         caps.push(await shot(
-          `<div id='x' style="display:inline-block;background:rgba(10,10,18,.74);color:#fff;font-size:30px;font-weight:600;padding:14px 26px;border-radius:14px;max-width:1080px;line-height:1.3">${hesc(t)}</div>`,
+          `<div id='x' style="display:inline-block;background:rgba(14,14,20,.55);color:rgba(255,255,255,.96);font-size:24px;font-weight:500;letter-spacing:.2px;padding:11px 24px;border-radius:999px;border:1px solid rgba(255,255,255,.16);max-width:920px;line-height:1.35;box-shadow:0 4px 24px rgba(0,0,0,.18)">${hesc(t)}</div>`,
         ));
       }
       const brand = spec.brand

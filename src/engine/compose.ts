@@ -42,11 +42,21 @@ const ff = (args: string[], cwd: string, onTime?: (sec: number) => void) =>
   });
 
 /**
- * Full-frame backdrop the (padded, rounded) recording is composited onto.
- * Resolved from the repo root rather than `import.meta.url` so it survives
- * Next.js's webpack bundling (which rewrites `new URL(..., import.meta.url)`).
+ * Full-frame backdrops the (padded, rounded) recording is composited onto —
+ * one is picked at random per video from assets/backgrounds. Resolved from the
+ * repo root rather than `import.meta.url` so it survives Next.js's webpack
+ * bundling (which rewrites `new URL(..., import.meta.url)`).
  */
 const BG_PATH = path.join(process.cwd(), "src/engine/assets/background.png");
+const BG_DIR = path.join(process.cwd(), "src/engine/assets/backgrounds");
+
+function pickBackground(): string | null {
+  try {
+    const files = fs.readdirSync(BG_DIR).filter((f) => /\.(png|jpe?g)$/i.test(f));
+    if (files.length) return path.join(BG_DIR, files[Math.floor(Math.random() * files.length)]);
+  } catch {}
+  return fs.existsSync(BG_PATH) ? BG_PATH : null;
+}
 
 export interface ComposeInput {
   frames: FrameRef[];
@@ -160,24 +170,34 @@ async function composeVideoNow(input: ComposeInput): Promise<ComposeResult> {
   const IW = W - PAD * 2, IH = H - PAD * 2;
 
   // Input 0 = recording frames, 1 = backdrop, then captions.
-  // Fall back to a solid-black backdrop if the image asset is missing.
-  const bgInput = fs.existsSync(BG_PATH)
-    ? ["-i", BG_PATH]
-    : ["-f", "lavfi", "-i", `color=c=black:s=${W}x${H}`];
-  const inputs = ["-f", "concat", "-safe", "0", "-i", "concat.txt", ...bgInput];
+  // Fall back to a solid-black backdrop if no image assets exist.
+  const bg = pickBackground();
+  const bgInput = bg ? ["-i", bg] : ["-f", "lavfi", "-i", `color=c=black:s=${W}x${H}`];
+  // Input 2 = the rounded-corner mask. Single frame, NO -loop: framesync
+  // repeats the last frame after EOF, whereas a looped input never EOFs and
+  // the whole graph encodes forever.
+  const inputs = ["-f", "concat", "-safe", "0", "-i", "concat.txt", ...bgInput, "-i", "mask.png"];
   overlays.caps.forEach((_, i) => inputs.push("-i", `cap_${i}.png`));
-  const capBase = 2;
+  const capBase = 3;
 
-  // Alpha = opaque everywhere except outside the corner-radius arcs → rounded corners.
+  // Rounded corners via a mask rendered ONCE: running geq per pixel per frame
+  // starved the encoder so badly the 10-min watchdog SIGKILLed it mid-encode
+  // (seen twice in prod, at 46% on 1cpu and 82% on 2cpu). The single-frame geq
+  // pre-pass costs milliseconds; the per-frame cost becomes a plain alphamerge.
   const r = RADIUS;
-  const rounded =
-    `a='if(gt(abs(X-W/2),W/2-${r})*gt(abs(Y-H/2),H/2-${r}),` +
-    `if(lte(hypot(abs(X-W/2)-(W/2-${r}),abs(Y-H/2)-(H/2-${r})),${r}),255,0),255)'`;
+  const maskExpr =
+    `if(gt(abs(X-W/2),W/2-${r})*gt(abs(Y-H/2),H/2-${r}),` +
+    `if(lte(hypot(abs(X-W/2)-(W/2-${r}),abs(Y-H/2)-(H/2-${r})),${r}),255,0),255)`;
+  await ff(
+    ["-f", "lavfi", "-i", `color=c=white:s=${IW}x${IH}`, "-frames:v", "1",
+     "-vf", `format=gray,geq=lum='${maskExpr}'`, "mask.png"],
+    tmp,
+  );
 
   let fc =
     `[1:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1[bg]` +
-    `;[0:v]scale=${IW}:${IH}:force_original_aspect_ratio=decrease:force_divisible_by=2,fps=${FPS},` +
-    `format=yuva420p,geq=lum='p(X,Y)':cb='p(X,Y)':cr='p(X,Y)':${rounded}[fg]` +
+    `;[0:v]scale=${IW}:${IH}:force_original_aspect_ratio=decrease:force_divisible_by=2,fps=${FPS},format=rgba[fg0]` +
+    `;[2:v]format=gray[mg];[mg][fg0]scale2ref[ms][fg1];[fg1][ms]alphamerge[fg]` +
     `;[bg][fg]overlay=x=(W-w)/2:y=(H-h)/2[comp]`;
   let cur = "comp";
   captions.forEach((c, i) => {
