@@ -134,6 +134,10 @@ export class BrowserSession {
   private frames: FrameRef[] = [];
   private recStart = 0;
   private recording = false;
+  // Recording-clock spans where an action was actually driving the page.
+  // Compose plays these at real speed and collapses everything between them
+  // (agent thinking time — which animated pages otherwise keep on film).
+  private actionWindows: { start: number; end: number }[] = [];
 
   private constructor(sessionId: string, liveViewUrl: string | undefined, browser: Browser, page: Page, framesDir: string) {
     this.sessionId = sessionId;
@@ -212,8 +216,14 @@ export class BrowserSession {
     return this.page.locator(`[data-fva="${a.targetIndex}"]`).first();
   }
 
+  /** Action spans on the recording clock, for compose's idle-time collapsing. */
+  getActionWindows(): { start: number; end: number }[] {
+    return this.actionWindows;
+  }
+
   async act(a: BrowserAction): Promise<ActionResult> {
     const sleep = (ms: number) => this.page.waitForTimeout(ms);
+    const winStart = this.now();
     try {
       if (a.action === "goto") {
         await this.page.goto(a.url!, { waitUntil: "domcontentloaded", timeout: 25_000 });
@@ -246,6 +256,9 @@ export class BrowserSession {
       return { ok: true, url: this.page.url() };
     } catch (e) {
       return { ok: false, error: String(e).slice(0, 160), url: this.page.url() };
+    } finally {
+      // Recorded even for failed actions — the page may have visibly changed.
+      if (this.recording) this.actionWindows.push({ start: winStart, end: this.now() });
     }
   }
 

@@ -284,10 +284,13 @@ export class AgentSession {
               this.emit({ type: "live_view", jobId: this.job.id, url: this.browser.liveViewUrl });
             }
 
-            await this.browser.startRecording({ width: OUTPUT.width, height: OUTPUT.height, quality: OUTPUT.quality });
-            this.captions.push({ t: 0, text: "Open the page" });
+            // Navigate BEFORE the screencast starts: the Kernel browser boots on
+            // its default page (DuckDuckGo), and recording first meant every
+            // video opened with it plus the whole navigation wait.
             const nav = await this.browser.act({ action: "goto", url: this.params.startUrl });
             if (!nav.ok) throw new Error(`could not open ${this.params.startUrl}: ${nav.error}`);
+            await this.browser.startRecording({ width: OUTPUT.width, height: OUTPUT.height, quality: OUTPUT.quality });
+            this.captions.push({ t: 0, text: "Open the page" });
             this.lastObs = await this.browser.observe();
             this.emit({ type: "action", jobId: this.job.id, n: 0, action: "goto", caption: "Open the page", ok: true });
 
@@ -416,7 +419,7 @@ export class AgentSession {
             stage("encoding cut", 0);
             let lastPct = 0;
             const out = await composeVideo({
-              frames, captions: this.captions, overlays,
+              frames, captions: this.captions, overlays, activeWindows: browser.getActionWindows(),
               outDir: jobDir(job.id), width: OUTPUT.width, height: OUTPUT.height, fps: OUTPUT.fps,
               onProgress: (pct) => {
                 // Encode is far faster than realtime; only ship meaningful steps.

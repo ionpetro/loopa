@@ -56,6 +56,13 @@ export interface ComposeInput {
   width: number;
   height: number;
   fps: number;
+  /**
+   * Recording-clock spans (ms) where an action was driving the page. Frames
+   * inside them play at real speed; each contiguous idle run between them is
+   * compressed to at most MAX_IDLE_SEC of video, so agent thinking pauses
+   * don't pad the cut even when the page keeps animating.
+   */
+  activeWindows?: { start: number; end: number }[];
   /** Encode progress, 0..1 (based on ffmpeg's -progress out_time). */
   onProgress?: (pct: number) => void;
 }
@@ -91,13 +98,45 @@ async function composeVideoNow(input: ComposeInput): Promise<ComposeResult> {
   fs.mkdirSync(outDir, { recursive: true });
 
   const t0 = frames[0].t;
+  const durs = frames.map((f, i) =>
+    i < frames.length - 1 ? Math.max(0.02, Math.min(1.6, (frames[i + 1].t - f.t) / 1000)) : 0.8,
+  );
+
+  // Collapse idle time: frames outside every action window (grown by a small
+  // margin so a caption placed just before its action stays in sync) are agent
+  // thinking pauses. Each contiguous idle run becomes at most MAX_IDLE_SEC of
+  // video — the per-frame 1.6s cap above only handles static pages; an
+  // animated page keeps emitting frames through a 30s pause and would land it
+  // in the cut verbatim. Long runs must DROP frames, not just shrink
+  // durations: hundreds of idle frames floored at 0.02s each still add up.
+  const MAX_IDLE_SEC = 1.0;
+  const keep = new Array<boolean>(frames.length).fill(true);
+  const windows = input.activeWindows ?? [];
+  if (windows.length) {
+    const inWindow = (t: number) => windows.some((w) => t >= w.start - 300 && t <= w.end + 500);
+    for (let i = 0; i < frames.length - 1; ) {
+      if (inWindow(frames[i].t)) { i++; continue; }
+      let j = i, sum = 0;
+      while (j < frames.length - 1 && !inWindow(frames[j].t)) sum += durs[j++];
+      if (sum > MAX_IDLE_SEC) {
+        const maxKept = Math.max(1, Math.floor(MAX_IDLE_SEC / 0.04)); // ≈25fps within the collapsed run
+        const kept: number[] = [];
+        const n = j - i;
+        if (n <= maxKept) for (let x = i; x < j; x++) kept.push(x);
+        else for (let s = 0; s < maxKept; s++) kept.push(i + Math.floor((s * n) / maxKept));
+        for (let x = i; x < j; x++) keep[x] = false;
+        for (const x of kept) { keep[x] = true; durs[x] = MAX_IDLE_SEC / kept.length; }
+      }
+      i = j;
+    }
+  }
+
   const lines: string[] = [];
   let total = 0;
   frames.forEach((f, i) => {
-    let dur = i < frames.length - 1 ? (frames[i + 1].t - f.t) / 1000 : 0.8;
-    dur = Math.max(0.02, Math.min(1.6, dur));
-    total += dur;
-    lines.push(`file '${f.file.replace(/'/g, "'\\''")}'`, `duration ${dur.toFixed(3)}`);
+    if (!keep[i]) return;
+    total += durs[i];
+    lines.push(`file '${f.file.replace(/'/g, "'\\''")}'`, `duration ${durs[i].toFixed(3)}`);
   });
   lines.push(`file '${frames[frames.length - 1].file.replace(/'/g, "'\\''")}'`);
   fs.writeFileSync(path.join(tmp, "concat.txt"), lines.join("\n") + "\n");
@@ -105,12 +144,12 @@ async function composeVideoNow(input: ComposeInput): Promise<ComposeResult> {
   overlays.caps.forEach((b, i) => fs.writeFileSync(path.join(tmp, `cap_${i}.png`), Buffer.from(b, "base64")));
 
   // Caption windows on the compressed timeline: map each caption's real capture
-  // time to video time by summing the capped frame durations up to it.
+  // time to video time by summing the kept, idle-collapsed durations up to it.
   const videoTimeAt = (t: number): number => {
     let vt = 0;
     for (let i = 0; i < frames.length - 1; i++) {
       if (frames[i].t >= t) break;
-      vt += Math.max(0.02, Math.min(1.6, (frames[i + 1].t - frames[i].t) / 1000));
+      if (keep[i]) vt += durs[i];
     }
     return vt;
   };
