@@ -7,7 +7,7 @@ import { ClapperboardIcon, PlayIcon } from "lucide-react";
 
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Button } from "@/components/ui/button";
-import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { StudioHeader } from "@/components/studio-header";
 import { apiUrl } from "@/lib/api-base";
 import { timeAgo } from "@/lib/timeago";
 
@@ -48,17 +48,7 @@ export default function VideosPage() {
 
   return (
     <div className="min-h-screen bg-bg-deep">
-      <header className="flex h-14 items-center justify-between border-b px-5">
-        <Link href="/" className="font-display text-xl tracking-tight">
-          demo<span className="text-rec">·</span>studio
-        </Link>
-        <div className="flex items-center gap-3">
-          <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-            my videos
-          </span>
-          <ThemeToggle />
-        </div>
-      </header>
+      <StudioHeader />
 
       <main className="mx-auto max-w-6xl px-6 py-10">
         {error && <p className="py-20 text-center font-mono text-xs text-rec">{error}</p>}

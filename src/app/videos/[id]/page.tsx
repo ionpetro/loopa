@@ -7,7 +7,7 @@ import { CheckIcon, ClapperboardIcon, DownloadIcon, LinkIcon } from "lucide-reac
 
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Button } from "@/components/ui/button";
-import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { StudioHeader } from "@/components/studio-header";
 import { DemoPlayer, type VideoChapter } from "@/components/demo-player";
 import { apiUrl } from "@/lib/api-base";
 import { timeAgo } from "@/lib/timeago";
@@ -47,20 +47,7 @@ export default function WatchPage() {
 
   return (
     <div className="min-h-screen bg-bg-deep">
-      <header className="flex h-14 items-center justify-between border-b px-5">
-        <Link href="/" className="font-display text-xl tracking-tight">
-          demo<span className="text-rec">·</span>studio
-        </Link>
-        <div className="flex items-center gap-3">
-          <Link
-            href="/videos"
-            className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground hover:text-foreground"
-          >
-            my videos
-          </Link>
-          <ThemeToggle />
-        </div>
-      </header>
+      <StudioHeader />
 
       <main className="mx-auto max-w-5xl px-6 py-10">
         {missing && (

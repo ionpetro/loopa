@@ -1,9 +1,8 @@
 "use client";
 
-import { Show, SignInButton, UserButton } from "@clerk/nextjs";
 import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
-import { CheckIcon, CopyIcon, DownloadIcon, FilmIcon, PanelRightCloseIcon, PanelRightOpenIcon, RotateCcwIcon, SquareArrowOutUpRightIcon, VideoIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, DownloadIcon, PanelRightCloseIcon, PanelRightOpenIcon, RotateCcwIcon, SquareArrowOutUpRightIcon, VideoIcon } from "lucide-react";
 
 import {
   Conversation,
@@ -35,7 +34,7 @@ import {
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { WebPreview, WebPreviewBody, WebPreviewNavigation, WebPreviewUrl } from "@/components/ai-elements/web-preview";
 import { Button } from "@/components/ui/button";
-import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { StudioHeader } from "@/components/studio-header";
 import { DemoPlayer } from "@/components/demo-player";
 import { useDemoSession, type ChatMessage } from "@/hooks/use-demo-session";
 import { apiBase } from "@/lib/api-base";
@@ -166,41 +165,18 @@ export default function Home() {
     <div className="flex h-screen overflow-hidden">
       {/* ── producer rail ───────────────────────────────────────────── */}
       <aside className="flex min-w-0 flex-1 flex-col bg-background">
-        <header className="flex h-14 shrink-0 items-center justify-between border-b px-5">
-          <div className="font-display text-xl tracking-tight">
-            demo<span className="text-rec">·</span>studio
-          </div>
-          <div className="flex items-center gap-3">
-            {stageActive && stageCollapsed && (
-              <button
-                type="button"
-                title="Open the stage"
-                onClick={() => setStageCollapsed(false)}
-                className="text-muted-foreground transition-colors hover:text-foreground"
-              >
-                <PanelRightOpenIcon className="size-4" />
-              </button>
-            )}
-            <ThemeToggle />
-            <Show when="signed-out">
-              {/* One entry point — Clerk's sign-in screen links to sign-up. */}
-              <SignInButton>
-                <Button size="sm">sign in</Button>
-              </SignInButton>
-            </Show>
-            <Show when="signed-in">
-              <UserButton>
-                <UserButton.MenuItems>
-                  <UserButton.Link
-                    label="My videos"
-                    labelIcon={<FilmIcon className="size-4" />}
-                    href="/videos"
-                  />
-                </UserButton.MenuItems>
-              </UserButton>
-            </Show>
-          </div>
-        </header>
+        <StudioHeader>
+          {stageActive && stageCollapsed && (
+            <button
+              type="button"
+              title="Open the stage"
+              onClick={() => setStageCollapsed(false)}
+              className="text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <PanelRightOpenIcon className="size-4" />
+            </button>
+          )}
+        </StudioHeader>
 
         <Conversation className="min-h-0 flex-1">
           <ConversationContent className="mx-auto w-full max-w-3xl gap-5 px-4 py-5">
