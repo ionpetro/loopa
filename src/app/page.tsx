@@ -180,7 +180,15 @@ export default function Home() {
               >
                 <FilmIcon className="size-4" />
               </Link>
-              <UserButton />
+              <UserButton>
+                <UserButton.MenuItems>
+                  <UserButton.Link
+                    label="My videos"
+                    labelIcon={<FilmIcon className="size-4" />}
+                    href="/videos"
+                  />
+                </UserButton.MenuItems>
+              </UserButton>
             </Show>
           </div>
         </header>
