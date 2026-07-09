@@ -251,7 +251,7 @@ export default function Home() {
         <div className="relative min-h-0 flex-1 p-6">
           <div
             className={cn(
-              "scanlines relative flex h-full flex-col overflow-hidden rounded-xl border bg-background shadow-[0_0_80px_-20px_oklch(0_0_0/60%)]",
+              "relative flex h-full flex-col overflow-hidden rounded-xl border bg-background shadow-[0_0_80px_-20px_oklch(0_0_0/60%)]",
               recording && "border-rec/50 ring-1 ring-rec/30",
             )}
           >

@@ -127,20 +127,6 @@
   80% { transform: translate(3%, 3%); }
 }
 
-/* CRT scanlines for the stage viewport */
-.scanlines::after {
-  content: "";
-  pointer-events: none;
-  position: absolute;
-  inset: 0;
-  z-index: 10;
-  background: repeating-linear-gradient(
-    to bottom,
-    transparent 0 2px,
-    oklch(0 0 0 / 7%) 2px 3px
-  );
-}
-
 @keyframes rec-blink {
   0%, 55% { opacity: 1; }
   60%, 100% { opacity: 0.25; }
