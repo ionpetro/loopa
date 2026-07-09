@@ -172,13 +172,6 @@ export default function Home() {
               </SignInButton>
             </Show>
             <Show when="signed-in">
-              <Link
-                href="/videos"
-                title="My videos"
-                className="text-muted-foreground transition-colors hover:text-foreground"
-              >
-                <FilmIcon className="size-4" />
-              </Link>
               <UserButton>
                 <UserButton.MenuItems>
                   <UserButton.Link
