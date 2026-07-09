@@ -31,8 +31,19 @@ const CURSOR_SCRIPT = `(() => {
   tag.textContent = "demo";
   tag.style.cssText = "position:absolute;left:19px;top:22px;background:#6d5cff;color:#fff;font:600 13px/1 system-ui,-apple-system,sans-serif;padding:5px 11px;border-radius:999px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.3)";
   c.appendChild(tag);
+  // Start where the cursor was before this navigation (sessionStorage survives
+  // same-origin navs), else centered — never offscreen: a fresh document used
+  // to park the cursor at -60px until the next mousemove, so it vanished after
+  // every page change (and scroll actions never emit mousemoves to bring it back).
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem("__curPos")); } catch (e) {}
+  c.style.left = saved ? saved[0] + "px" : "50%";
+  c.style.top = saved ? saved[1] + "px" : "45%";
   const add = () => { if (document.body && !document.getElementById("__cursor")) document.body.appendChild(c); };
   add();
+  // SPA re-renders and hydration can silently remove the node; re-attach cheaply.
+  document.addEventListener("DOMContentLoaded", add);
+  setInterval(add, 400);
   const pc = new PC((pt) => { c.style.left = pt[0] + "px"; c.style.top = pt[1] + "px"; });
   const ripple = (x, y) => {
     if (!document.body) return;
@@ -50,6 +61,7 @@ const CURSOR_SCRIPT = `(() => {
   document.addEventListener("mousemove", (e) => {
     add();
     pc.addPoint([e.clientX, e.clientY]);
+    try { sessionStorage.setItem("__curPos", JSON.stringify([e.clientX, e.clientY])); } catch (err) {}
     clearTimeout(settle);
     settle = setTimeout(() => { c.style.left = e.clientX + "px"; c.style.top = e.clientY + "px"; }, 340);
   }, true);
