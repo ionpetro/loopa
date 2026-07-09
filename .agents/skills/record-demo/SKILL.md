@@ -52,6 +52,9 @@ demo-studio → Authenticate). Do not retry the call until they have.
 1. Call `create_demo_video` with:
    - `goal` — one or two sentences describing what the video should show.
    - `startUrl` — the full https:// URL of the page where the demo starts.
+     Infer it when the user names a site casually ("go on google" →
+     `https://www.google.com`); don't ask them to spell out a URL. If the
+     domain is ambiguous, suggest one and proceed once they agree.
 2. It returns immediately with a `runId` and a stable `watchUrl`. Check the
    `shareable` flag: when `true`, share the `watchUrl` right away — it works
    while the video is still generating. When `false` (a local backend without

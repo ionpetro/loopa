@@ -77,7 +77,13 @@ export function buildMcpServer(baseUrl: string, userId?: string, clientId?: stri
         "pay for anything or destroy data.",
       inputSchema: {
         goal: z.string().min(1).max(500).describe("What the video should demonstrate, in one or two sentences."),
-        startUrl: z.string().url().describe("Full https:// URL of the page where the demo starts."),
+        startUrl: z
+          .string()
+          .url()
+          .describe(
+            "Full https:// URL of the page where the demo starts. Infer it when the user names a site " +
+              "casually ('go on google' → https://www.google.com); only ask if the domain is genuinely ambiguous.",
+          ),
       },
     },
     async ({ goal, startUrl }) => {

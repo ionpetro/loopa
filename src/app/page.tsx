@@ -49,6 +49,23 @@ function fmtTimecode(ms: number): string {
   return `${mm}:${ss}:${ff}`;
 }
 
+// Poppins (our font-mono alias) has no tabular figures, so tabular-nums is a
+// no-op and a ticking timecode makes the whole header bar jitter. Fixed-width
+// cells per character keep the layout still.
+function Timecode({ ms }: { ms: number }) {
+  return (
+    <span className="flex" aria-label={fmtTimecode(ms)}>
+      {fmtTimecode(ms)
+        .split("")
+        .map((ch, i) => (
+          <span key={i} className={cn("text-center", ch === ":" ? "w-[0.5ch]" : "w-[1.1ch]")}>
+            {ch}
+          </span>
+        ))}
+    </span>
+  );
+}
+
 function agentInstructions(): string {
   const base = apiBase() || "http://localhost:3001";
   return `I'd like you to set up Demo Studio: browser demo videos recorded by agents.
@@ -271,7 +288,7 @@ export default function Home() {
           </span>
           <span>cloud</span>
           <span className="flex items-center gap-3">
-            <span className="tabular-nums">{fmtTimecode(recording ? clock : 0)}</span>
+            <Timecode ms={recording ? clock : 0} />
             <button
               type="button"
               title="Collapse the stage"
