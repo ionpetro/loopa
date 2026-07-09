@@ -26,7 +26,9 @@ kill_timeout = "30s"
     method = "GET"
     path = "/health"
 
+# shared-cpu-1x could not finish an encode: burst credits ran out mid-ffmpeg,
+# progress fell to ~5% per 100s, and the 10-min compose watchdog SIGKILLed it.
 [[vm]]
-  memory = "1gb"
+  memory = "2gb"
   cpu_kind = "shared"
-  cpus = 1
+  cpus = 2

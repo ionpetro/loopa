@@ -11,7 +11,7 @@ RUN npm install --omit=dev
 
 COPY src/engine ./src/engine
 COPY src/lib ./src/lib
-COPY backend/server.ts backend/mcp.ts ./backend/
+COPY backend/*.ts ./backend/
 
 ENV NODE_ENV=production
 EXPOSE 3001
