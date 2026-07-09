@@ -8,6 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { getOrCreateSession } from "./agent-session.ts";
 import { loadRunRecord, persistRun } from "./db.ts";
+import { assertRunQuota } from "./quota.ts";
 import type { ActionLog, SessionEvent } from "./types.ts";
 
 export type RunStatus = "planning" | "recording" | "composing" | "done" | "error";
@@ -76,7 +77,8 @@ function releaseRunSlot(): void {
   else activeRuns--;
 }
 
-export function startDemoRun(goal: string, startUrl: string, userId?: string, clientId?: string): DemoRun {
+export async function startDemoRun(goal: string, startUrl: string, userId?: string, clientId?: string): Promise<DemoRun> {
+  await assertRunQuota(userId);
   const url = new URL(startUrl); // throws on invalid URL
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new Error("startUrl must be an http(s) URL");
@@ -209,6 +211,15 @@ function runAttempt(run: DemoRun, attempt: number): Promise<void> {
 
 export function getDemoRun(id: string): DemoRun | undefined {
   return runs.get(id);
+}
+
+/** In-flight (incl. queued) runs owned by a user (quota enforcement). */
+export function activeRunCountFor(userId: string): number {
+  let n = 0;
+  for (const r of runs.values()) {
+    if (r.userId === userId && r.status !== "done" && r.status !== "error") n++;
+  }
+  return n;
 }
 
 /**

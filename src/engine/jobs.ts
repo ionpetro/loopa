@@ -64,3 +64,12 @@ export function createJob(
 export function getJob(id: string): DemoJob | undefined {
   return store.get(id);
 }
+
+/** In-flight jobs owned by a user (quota enforcement). */
+export function activeJobCountFor(userId: string): number {
+  let n = 0;
+  for (const j of store.values()) {
+    if (j.userId === userId && j.status !== "done" && j.status !== "error") n++;
+  }
+  return n;
+}

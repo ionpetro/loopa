@@ -250,6 +250,57 @@ export function persistRun(run: RunRecord): void {
   );
 }
 
+/**
+ * How many videos a user started in the last `hours` — greatest of runs and
+ * jobs, since an MCP run and its job describe the same work but interactive
+ * jobs have no run. Returns null when the DB is unavailable (callers decide
+ * whether to fail open).
+ */
+export async function countUserWorkSince(userId: string, hours: number): Promise<number | null> {
+  if (!dbEnabled()) return null;
+  try {
+    await ensureSchema();
+    const { rows } = await getPool().query(
+      `select greatest(
+         (select count(*) from demo_jobs where user_id = $1 and created_at > now() - make_interval(hours => $2)),
+         (select count(*) from demo_runs where user_id = $1 and created_at > now() - make_interval(hours => $2))
+       )::int as n`,
+      [userId, hours],
+    );
+    return rows[0].n;
+  } catch (err) {
+    logDbError(`countUserWorkSince(${userId})`, err);
+    return null;
+  }
+}
+
+/**
+ * Mark rows left non-terminal by a previous process as errored. Called once
+ * at boot, before this process accepts work: after a hard crash (OOM,
+ * SIGKILL) the graceful-shutdown path never ran, and these rows would sit in
+ * "recording"/"composing" forever while pollers see 202.
+ */
+export async function failStaleWork(reason: string): Promise<{ jobs: number; runs: number } | null> {
+  if (!dbEnabled()) return null;
+  try {
+    await ensureSchema();
+    const j = await getPool().query(
+      `update demo_jobs set status = 'error', error = coalesce(error, $1), updated_at = now()
+       where status not in ('done', 'error')`,
+      [reason],
+    );
+    const r = await getPool().query(
+      `update demo_runs set status = 'error', error = coalesce(error, $1), updated_at = now()
+       where status not in ('done', 'error')`,
+      [reason],
+    );
+    return { jobs: j.rowCount ?? 0, runs: r.rowCount ?? 0 };
+  } catch (err) {
+    logDbError("failStaleWork", err);
+    return null;
+  }
+}
+
 /** Load a run persisted by a previous process. Returns undefined on miss or error. */
 export async function loadRunRecord(id: string): Promise<RunRecord | undefined> {
   if (!dbEnabled()) return undefined;

@@ -15,6 +15,20 @@ author: Demo Studio
 Demo Studio records real browser demo videos for agents. Use this skill when a
 recorded walkthrough of a live page is clearer than another chat message.
 
+## Setup and auth
+
+The MCP endpoint is protected with OAuth. Adding the server triggers the
+standard MCP sign-in flow (a browser window to authenticate):
+
+```bash
+claude mcp add --transport http demo-studio https://demo-studio-backend.fly.dev/mcp
+```
+
+Videos are attributed to the signed-in user and appear in their Demo Studio
+library. If a tool call fails with 401/unauthorized, the token expired or was
+revoked — ask the user to re-authenticate (in Claude Code: `/mcp` → select
+demo-studio → Authenticate). Do not retry the call until they have.
+
 ## Use when
 
 - The user asks for a demo, walkthrough, or video of a live web page.
@@ -45,8 +59,12 @@ recorded walkthrough of a live page is clearer than another chat message.
    PRs, issues, or chat; wait for `done` and use the link `get_demo_video`
    returns then, which is durable when it is marked `shareable`.
 3. Generation takes a few minutes. Poll `get_demo_video` with the `runId`
-   roughly every 30 seconds until `status` is `done` (or `error`).
+   roughly every 30 seconds until `status` is `done` (or `error`). Failed runs
+   include the failure reason in `error` — report it verbatim.
 4. While recording, `liveViewUrl` lets a human watch the browser live.
+5. Sites behind aggressive bot protection (e.g. Cloudflare challenges) may
+   show a verification wall instead of the page — if the action log shows the
+   agent stuck on one, tell the user and suggest a different target page.
 
 ## Output format
 

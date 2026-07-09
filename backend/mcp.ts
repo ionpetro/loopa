@@ -81,7 +81,7 @@ export function buildMcpServer(baseUrl: string, userId?: string, clientId?: stri
       },
     },
     async ({ goal, startUrl }) => {
-      const run = startDemoRun(goal, startUrl, userId, clientId);
+      const run = await startDemoRun(goal, startUrl, userId, clientId);
       const snap = await runSnapshot(run, baseUrl);
       return asText({
         ...snap,

@@ -8,7 +8,7 @@ import path from "node:path";
 import { verifyToken } from "@clerk/backend";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { disposeAllSessions, getOrCreateSession } from "../src/engine/agent-session.ts";
-import { flushDb } from "../src/engine/db.ts";
+import { failStaleWork, flushDb } from "../src/engine/db.ts";
 import type { SessionEvent } from "../src/engine/types.ts";
 import { jobDir, sweepOldJobDirs } from "../src/engine/jobs.ts";
 import { failAllActiveRuns, loadDemoRun } from "../src/engine/headless-run.ts";
@@ -409,6 +409,14 @@ server.listen(PORT, () => {
   console.log(`demo-studio backend listening on :${PORT}`);
   // Reclaim disk from old job dirs left by prior processes on this box.
   sweepOldJobDirs();
+  // Boot reconciliation: a hard crash (OOM/SIGKILL) skips graceful shutdown,
+  // leaving DB rows stuck in "recording"/"composing" while pollers see 202
+  // forever. Nothing from a previous process can still be running.
+  void failStaleWork("backend restarted while this was in progress — submit the demo again").then((res) => {
+    if (res && (res.jobs || res.runs)) {
+      console.log(`[boot] failed ${res.jobs} stale job(s) and ${res.runs} stale run(s) from a previous process`);
+    }
+  });
 });
 
 // Graceful shutdown: a deploy/restart must fail open jobs (persisted to the

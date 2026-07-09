@@ -9,6 +9,7 @@ import { composeVideo } from "./compose.ts";
 import { createJob, jobDir } from "./jobs.ts";
 import { flushDb, persistJob, persistMessage, persistSession } from "./db.ts";
 import { uploadThumbnail, uploadVideo } from "./storage.ts";
+import { assertRunQuota } from "./quota.ts";
 import { apiUrl } from "../lib/api-base.ts";
 import type {
   BrowserAction, ChatPart, DemoJob, DemoParams, Observation, Recipe, RecipeStep, SessionEvent, TimedCaption,
@@ -269,6 +270,12 @@ export class AgentSession {
           this.noteToolCall("roll");
           if (!this.params) return { ...text("No demo params saved — call set_demo_params first."), isError: true };
           if (this.browser) return { ...text("A demo is already in progress."), isError: true };
+          try {
+            await assertRunQuota(this.userId);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { ...text(`start_demo blocked: ${msg} Tell the user, do not retry.`), isError: true };
+          }
           try {
             this.job = createJob(this.params.goal, this.params.startUrl, {
               userId: this.userId,
