@@ -5,6 +5,7 @@
  * no SDK needed for a single upload call.
  */
 import fs from "node:fs";
+import { log } from "./log.ts";
 
 const BUCKET = "videos";
 let bucketReady: Promise<void> | null = null;
@@ -85,9 +86,9 @@ async function uploadObject(objectPath: string, filePath: string, contentType: s
       return `${base}/storage/v1/object/public/${BUCKET}/${objectPath}`;
     } catch (err) {
       lastErr = err;
-      console.error(
-        `[storage] upload(${objectPath}) attempt ${attempt}/${ATTEMPTS} failed:`,
-        err instanceof Error ? err.message : err,
+      log.warn(
+        "storage",
+        `upload(${objectPath}) attempt ${attempt}/${ATTEMPTS} failed: ${err instanceof Error ? err.message : err}`,
       );
       if (attempt < ATTEMPTS) await new Promise((r) => setTimeout(r, 2_000 * attempt));
     }

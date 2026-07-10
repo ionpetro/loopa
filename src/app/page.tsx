@@ -2,7 +2,8 @@
 
 import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
-import { CheckIcon, CopyIcon, DownloadIcon, PanelRightCloseIcon, PanelRightOpenIcon, RotateCcwIcon, SquareArrowOutUpRightIcon, VideoIcon } from "lucide-react";
+import { SignUpButton } from "@clerk/nextjs";
+import { CheckIcon, CopyIcon, DownloadIcon, LockKeyholeOpenIcon, PanelRightCloseIcon, PanelRightOpenIcon, RotateCcwIcon, SquareArrowOutUpRightIcon, VideoIcon } from "lucide-react";
 
 import {
   Conversation,
@@ -36,7 +37,8 @@ import { WebPreview, WebPreviewBody, WebPreviewNavigation, WebPreviewUrl } from 
 import { Button } from "@/components/ui/button";
 import { StudioHeader } from "@/components/studio-header";
 import { DemoPlayer } from "@/components/demo-player";
-import { useDemoSession, type ChatMessage } from "@/hooks/use-demo-session";
+import { LoopaLoader } from "@/components/loopa-loader";
+import { useDemoSession, type ChatMessage, type ChatPart } from "@/hooks/use-demo-session";
 import { apiBase } from "@/lib/api-base";
 import { cn } from "@/lib/utils";
 
@@ -91,8 +93,64 @@ function CopyAgentInstructions() {
       }}
     >
       {copied ? <CheckIcon className="text-ok" /> : <CopyIcon />}
-      {copied ? "copied" : "copy agent instructions"}
+      {copied ? "copied" : "copy instructions"}
     </Button>
+  );
+}
+
+/** Friendly labels for tool calls surfaced in chat; unknown names fall back to the raw name. */
+const TOOL_LABELS: Record<string, string> = {
+  // studio tools
+  plan: "locking the shot list",
+  login: "waiting for sign-in",
+  roll: "rolling camera",
+  action: "driving the browser",
+  observe: "checking the page",
+  wrap: "wrapping the take",
+  cut: "developing the cut",
+  // cursor sdk built-ins
+  glob: "scanning files",
+  grep: "searching files",
+  read: "reading files",
+  write: "writing files",
+  edit: "editing files",
+  ls: "listing files",
+  shell: "running commands",
+};
+
+const toolLabel = (name: string) => TOOL_LABELS[name] ?? name.replaceAll("_", " ");
+
+type MessageItem =
+  | { type: "text"; text: string }
+  | { type: "tools"; names: string[] };
+
+/** Consecutive tool calls collapse into one activity line that updates in place. */
+function groupParts(parts: ChatPart[]): MessageItem[] {
+  const items: MessageItem[] = [];
+  for (const part of parts) {
+    const last = items[items.length - 1];
+    if (part.type === "text") {
+      items.push({ type: "text", text: part.text });
+    } else if (last?.type === "tools") {
+      last.names.push(part.toolName);
+    } else {
+      items.push({ type: "tools", names: [part.toolName] });
+    }
+  }
+  return items;
+}
+
+function ToolActivity({ names }: { names: string[] }) {
+  const label = toolLabel(names[names.length - 1]);
+  return (
+    <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground/70">
+      <span className="text-ok">✓</span>
+      {/* keyed remount replays the rise-in whenever the streaming label changes */}
+      <span key={`${names.length}-${label}`} className="tool-swap">
+        {label}
+      </span>
+      {names.length > 1 && <span className="text-muted-foreground/40">×{names.length}</span>}
+    </div>
   );
 }
 
@@ -100,17 +158,11 @@ function ChatMessageView({ message }: { message: ChatMessage }) {
   return (
     <Message from={message.role}>
       <MessageContent>
-        {message.parts.map((part, i) =>
-          part.type === "text" ? (
-            <MessageResponse key={i}>{part.text}</MessageResponse>
+        {groupParts(message.parts).map((item, i) =>
+          item.type === "text" ? (
+            <MessageResponse key={i}>{item.text}</MessageResponse>
           ) : (
-            <div
-              key={part.toolCallId}
-              className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted-foreground/70"
-            >
-              <span className="text-ok">✓</span>
-              <span>{part.toolName.replaceAll("_", " ")}</span>
-            </div>
+            <ToolActivity key={i} names={item.names} />
           ),
         )}
       </MessageContent>
@@ -131,7 +183,7 @@ const MODELS = [
 ];
 
 export default function Home() {
-  const { messages, busy, stage, setStage, ticks, compose, error, recStart, send, model, setModel } = useDemoSession();
+  const { messages, busy, stage, setStage, ticks, compose, error, authRequired, recStart, send, confirmLogin, model, setModel } = useDemoSession();
   const [clock, setClock] = useState(0);
   const [input, setInput] = useState("");
 
@@ -200,13 +252,27 @@ export default function Home() {
 
                 <div className="hero-rise flex flex-col items-center gap-2" style={{ animationDelay: "140ms" }}>
                   <div className="font-mono text-[10px] uppercase tracking-[0.3em] text-muted-foreground/70">
-                    or let your own agent direct
+                    or use your agent
                   </div>
                   <CopyAgentInstructions />
                 </div>
               </div>
             ) : (
               messages.map((m) => <ChatMessageView key={m.id} message={m} />)
+            )}
+            {authRequired && (
+              <Message from="assistant">
+                <MessageContent>
+                  <MessageResponse>
+                    You&apos;ll need an account before I can roll camera — it only takes a moment.
+                  </MessageResponse>
+                  <SignUpButton>
+                    <Button size="sm" className="w-fit">
+                      sign up to continue
+                    </Button>
+                  </SignUpButton>
+                </MessageContent>
+              </Message>
             )}
             {awaitingReply && (
               <Shimmer className="font-mono text-xs uppercase tracking-widest">rolling…</Shimmer>
@@ -221,7 +287,7 @@ export default function Home() {
           </div>
         )}
 
-        <div className="border-t p-4">
+        <div className="p-4">
           <PromptInput className="mx-auto w-full max-w-3xl" onSubmit={({ text }) => submit(text)}>
             <PromptInputBody>
               <PromptInputTextarea
@@ -260,7 +326,7 @@ export default function Home() {
         <div className="flex h-14 shrink-0 items-center justify-between gap-4 border-b px-5 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
           <span className={cn("flex items-center gap-2", recording && "text-rec")}>
             <span className={cn("size-2 rounded-full bg-current", recording && "rec-dot")} />
-            {recording ? "rec" : stage.mode === "done" ? "wrap" : "standby"}
+            {recording ? "rec" : stage.mode === "done" ? "wrap" : stage.mode === "login" ? "private" : "standby"}
           </span>
           <span>cloud</span>
           <span className="flex items-center gap-3">
@@ -283,11 +349,11 @@ export default function Home() {
               // Live/done: the card hugs the media frame (16:10 browser, 16:9
               // video) instead of stretching — no letterbox bars. Width capped
               // so chrome + media always fit the available height.
-              stage.mode === "live" || stage.mode === "done" ? "max-h-full" : "h-full",
+              stage.mode === "live" || stage.mode === "done" || stage.mode === "login" ? "max-h-full" : "h-full",
               recording && "border-rec/50 ring-1 ring-rec/30",
             )}
             style={
-              stage.mode === "live"
+              stage.mode === "live" || stage.mode === "login"
                 ? { maxWidth: "calc((100vh - 9.25rem) * 1.6)" }
                 : stage.mode === "done"
                   ? { maxWidth: "calc((100vh - 10.75rem) * 1.7778)" }
@@ -299,7 +365,7 @@ export default function Home() {
                 <Plan defaultOpen className="w-full max-w-xl">
                   <PlanHeader>
                     <div className="flex flex-col gap-1.5">
-                      <div className="font-mono text-[10px] uppercase tracking-[0.3em] text-amber">
+                      <div className="font-mono text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
                         shot list locked
                       </div>
                       <PlanTitle>{stage.goal}</PlanTitle>
@@ -330,6 +396,32 @@ export default function Home() {
                   </PlanFooter>
                 </Plan>
               </div>
+            )}
+
+            {stage.mode === "login" && (
+              <Fragment>
+                <div className="flex items-center justify-between gap-4 border-b bg-amber/10 px-4 py-3">
+                  <span className="font-mono text-xs text-muted-foreground">
+                    <b className="text-muted-foreground">private set</b> · log in to {stage.domain} yourself —
+                    nothing is being recorded
+                  </span>
+                  <Button size="sm" onClick={() => void confirmLogin()}>
+                    <LockKeyholeOpenIcon /> i&apos;m logged in — continue
+                  </Button>
+                </div>
+                <WebPreview className="w-full border-0" defaultUrl={stage.liveViewUrl}>
+                  <WebPreviewNavigation>
+                    {/* decorative macOS traffic lights */}
+                    <span aria-hidden className="flex items-center gap-1.5 pl-1.5 pr-2">
+                      <span className="size-3 rounded-full bg-[#ff5f57]" />
+                      <span className="size-3 rounded-full bg-[#febc2e]" />
+                      <span className="size-3 rounded-full bg-[#28c840]" />
+                    </span>
+                    <WebPreviewUrl readOnly />
+                  </WebPreviewNavigation>
+                  <WebPreviewBody className="aspect-[1280/800] w-full flex-none" allow="clipboard-read; clipboard-write" />
+                </WebPreview>
+              </Fragment>
             )}
 
             {stage.mode === "live" && (
@@ -369,7 +461,7 @@ export default function Home() {
                         )}
                       >
                         <span className="text-muted-foreground">{String(t.n).padStart(2, "0")}</span>
-                        <span className="uppercase tracking-widest text-amber">{t.action}</span>
+                        <span className="uppercase tracking-widest text-muted-foreground">{t.action}</span>
                         <span className="flex-1 truncate">{t.caption}</span>
                         <span className={t.ok ? "text-ok" : "text-rec"}>{t.ok ? "✓" : "✗"}</span>
                       </div>
@@ -379,7 +471,7 @@ export default function Home() {
 
                 {stage.composing && (
                   <div className="flex aspect-[1280/800] w-full flex-col items-center justify-center gap-6 bg-background">
-                    <div className="spool" />
+                    <LoopaLoader className="h-10 text-muted-foreground" />
                     <Shimmer className="font-mono text-xs uppercase tracking-[0.3em]">
                       developing film
                     </Shimmer>
@@ -403,7 +495,7 @@ export default function Home() {
                               </span>
                               <span className={cn(state === "active" && "animate-pulse")}>{s}</span>
                               {state === "active" && compose?.pct != null && (
-                                <span className="ml-auto tabular-nums text-amber">
+                                <span className="ml-auto tabular-nums text-muted-foreground">
                                   {Math.round(compose.pct * 100)}%
                                 </span>
                               )}

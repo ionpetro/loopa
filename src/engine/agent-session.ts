@@ -6,8 +6,10 @@ import { Agent, type SDKAgent } from "@cursor/sdk";
 import { BrowserSession, observationText } from "./browser-session.ts";
 import { getLocalAgentStore } from "./sdk-store.ts";
 import { composeVideo } from "./compose.ts";
-import { createJob, jobDir } from "./jobs.ts";
+import { createJob, jobDir, DATA_DIR } from "./jobs.ts";
+import { ensureKernelProfile, kernelProfileExists, profileNameFor } from "./kernel.ts";
 import { flushDb, persistJob, persistMessage, persistSession } from "./db.ts";
+import { clip, log, since } from "./log.ts";
 import { uploadThumbnail, uploadVideo } from "./storage.ts";
 import { assertRunQuota } from "./quota.ts";
 import { apiUrl } from "../lib/api-base.ts";
@@ -17,6 +19,8 @@ import type {
 
 const MAX_ACTIONS = 24;
 const OUTPUT = { fps: 30, width: 1280, height: 720, quality: 60 };
+/** How long a login handoff waits for the user before giving up. */
+const LOGIN_TIMEOUT_MS = 10 * 60_000;
 
 const SYSTEM = `You are a video walkthrough producer. You plan browser demo videos with the user, then record them by driving a real cloud browser yourself.
 
@@ -29,6 +33,8 @@ Rules:
 - Infer the start URL from a casual site name ("go on google" → https://www.google.com) instead of asking for the full https:// URL. If the domain is ambiguous, suggest one and proceed once the user agrees.
 - Ask one or two short questions at a time. Don't repeat answered questions.
 - When you have BOTH, call set_demo_params, then summarize the plan and ask the user to confirm.
+- If the demo needs the user's account (they say the page is behind a login, or the goal clearly requires being signed in), call request_login after set_demo_params and BEFORE start_demo. It opens a private, un-recorded browser where the user logs in themselves; their session is saved for this and future demos on that site.
+- NEVER ask for, accept, or type credentials (usernames, passwords, 2FA codes). If the user pastes credentials into chat, do not use or repeat them — point them to the secure login window instead.
 
 ## Phase 2 — record (after the user confirms)
 Call start_demo. It opens a recorded cloud browser at the start URL and returns the page observation (URL, ELEMENTS list with indexes, screenshot). The user is watching live, and EVERYTHING you do is being recorded into the final video — move deliberately, shortest clean path, no backtracking.
@@ -36,6 +42,8 @@ Call start_demo. It opens a recorded cloud browser at the start URL and returns 
 Then repeat: call browser_action with exactly ONE action (click/type/hover/scroll/goto/wait) toward the goal. For click/type/hover set target_index from the LATEST elements list. Always include a short viewer-facing "caption" — it's overlaid on the video while that action plays. Each call returns a fresh elements list; do not call observe_page unless the list seems stale or you need to see the page.
 
 When the goal is visibly achieved, call finish_demo with a short video title. It stops recording, produces the MP4, and returns the result. Tell the user it's ready and ask if they want another take or a different demo.
+
+If a login wall unexpectedly blocks the demo mid-recording, do NOT type credentials — call abort_demo, then offer to set up the login (request_login) and re-record.
 
 If a recording fails, apologize briefly and ask whether to retry or adjust the plan.`;
 
@@ -83,6 +91,8 @@ export class AgentSession {
   private params: DemoParams | null = null;
   private job: DemoJob | null = null;
   private browser: BrowserSession | null = null;
+  /** Pending login handoff — resolves true when the user clicks Continue. */
+  private loginResolve: ((confirmed: boolean) => void) | null = null;
   private lastObs: Observation | null = null;
   private actionCount = 0;
   private captions: TimedCaption[] = [];
@@ -90,6 +100,11 @@ export class AgentSession {
 
   constructor(id: string) {
     this.id = id;
+  }
+
+  /** Log tag: the job when one is live (its story matters most), else the session. */
+  private get tag(): string {
+    return this.job ? `job ${this.job.id}` : `session ${this.id}`;
   }
 
   // --- events -------------------------------------------------------------
@@ -108,6 +123,7 @@ export class AgentSession {
    * itself with a one-word studio label instead.
    */
   private noteToolCall(label: string) {
+    log.info(this.tag, `tool: ${label}`);
     this.emit({ type: "tool_call", name: label });
     this.turnParts?.push({ type: "tool-call", toolCallId: `tc-${this.turnParts.length}`, toolName: label });
   }
@@ -162,6 +178,15 @@ export class AgentSession {
     return this.busy;
   }
 
+  /** Resolve a pending login handoff (the UI's Continue button). False when none is open. */
+  confirmLogin(): boolean {
+    const resolve = this.loginResolve;
+    if (!resolve) return false;
+    this.loginResolve = null;
+    resolve(true);
+    return true;
+  }
+
   get hasActiveJob(): boolean {
     return this.job != null;
   }
@@ -172,6 +197,8 @@ export class AgentSession {
       return;
     }
     this.busy = true;
+    const turnStartedAt = Date.now();
+    log.info(`session ${this.id}`, `turn start (model ${this.model}, user ${this.userId ?? "anon"}): "${clip(message)}"`);
     const assistantParts: ChatPart[] = [];
     this.turnParts = assistantParts;
     persistSession(this.id, this.userId);
@@ -205,7 +232,7 @@ export class AgentSession {
       }
       const result = await run.wait();
       if (result.status === "error") {
-        console.error(`[session ${this.id}] agent run failed:`, JSON.stringify(result));
+        log.error(`session ${this.id}`, `agent run failed: ${JSON.stringify(result)}`);
         const detail = (result as any).error?.message ?? (result as any).error ?? (result as any).message;
         this.emit({ type: "error", message: `Agent run failed${detail ? `: ${detail}` : "."}` });
         // A run that died without streaming anything is the "sick process"
@@ -215,6 +242,7 @@ export class AgentSession {
         }
       }
     } catch (err) {
+      log.error(`session ${this.id}`, "turn crashed", err);
       this.emit({ type: "error", message: err instanceof Error ? err.message : String(err) });
     } finally {
       this.busy = false;
@@ -224,6 +252,7 @@ export class AgentSession {
       }
       this.turnParts = null;
       if (assistantParts.length > 0) persistMessage(this.id, "assistant", assistantParts);
+      log.info(`session ${this.id}`, `turn done in ${since(turnStartedAt)}`);
       this.emit({ type: "agent_turn_done" });
     }
   }
@@ -232,6 +261,7 @@ export class AgentSession {
 
   private async failJob(reason: string) {
     if (this.job) {
+      log.warn(`job ${this.job.id}`, `failed after ${this.job.actions.length} action(s): ${reason}`);
       this.job.status = "error";
       this.job.error = reason;
       this.emit({ type: "job_status", jobId: this.job.id, status: "error", error: reason });
@@ -245,6 +275,19 @@ export class AgentSession {
     await this.browser?.close().catch(() => {});
     this.browser = null;
     this.job = null;
+  }
+
+  /** Saved-login profile for this user + site, if one exists (loaded read-only). */
+  private async loginProfileFor(startUrl: string): Promise<{ name: string } | undefined> {
+    if (!this.userId) return undefined;
+    try {
+      const name = profileNameFor(this.userId, new URL(startUrl).host);
+      return (await kernelProfileExists(name)) ? { name } : undefined;
+    } catch (err) {
+      // A profile lookup must never block a recording — run logged out instead.
+      log.error(`session ${this.id}`, "profile lookup failed", err instanceof Error ? err.message : err);
+      return undefined;
+    }
   }
 
   private buildTools() {
@@ -264,13 +307,103 @@ export class AgentSession {
         },
       },
 
+      request_login: {
+        description:
+          "Open the demo site in a private, UN-recorded cloud browser and hand control to the user so they log in themselves. Blocks until they confirm (or 10 minutes pass); their session is saved for this and future demos on the site. Call after set_demo_params and before start_demo when the demo needs their account. Never ask the user for credentials.",
+        inputSchema: {
+          type: "object",
+          properties: { login_url: { type: "string", description: "Page to open for the login; defaults to the start URL." } },
+        },
+        execute: async (args: any): Promise<ToolResult> => {
+          this.noteToolCall("login");
+          if (!this.params) return { ...text("No demo params saved — call set_demo_params first."), isError: true };
+          if (this.job) return { ...text("A demo is already recording — logins must happen before start_demo."), isError: true };
+          if (this.loginResolve) return { ...text("A login handoff is already open."), isError: true };
+          const host = new URL(this.params.startUrl).host;
+          let profileSaved = false;
+          try {
+            if (!this.browser) {
+              // The user's login should outlive this browser: save_changes
+              // persists cookies/localStorage into the per-(user, site) profile
+              // on close. Best-effort — profiles are a paid Kernel feature
+              // (403 insufficient_plan on the free tier), and the handoff still
+              // works without one: the login lives as long as this browser,
+              // which start_demo reuses for the recording.
+              let profile: { name: string; saveChanges: boolean } | undefined;
+              if (this.userId) {
+                try {
+                  const name = profileNameFor(this.userId, host);
+                  await ensureKernelProfile(name);
+                  profile = { name, saveChanges: true };
+                  profileSaved = true;
+                } catch (err) {
+                  log.warn(
+                    `session ${this.id}`,
+                    `profile unavailable — login won't be remembered: ${err instanceof Error ? err.message : err}`,
+                  );
+                }
+              }
+              // Real frames dir arrives at start_demo (no job exists yet).
+              this.browser = await BrowserSession.create(
+                path.join(DATA_DIR, "handoff", this.id, "frames"),
+                undefined,
+                profile,
+              );
+              this.jobStartedAt = Date.now();
+              const loginUrl = args.login_url ? String(args.login_url) : this.params.startUrl;
+              const nav = await this.browser.act({ action: "goto", url: loginUrl });
+              if (!nav.ok) throw new Error(`could not open ${loginUrl}: ${nav.error}`);
+            }
+            if (!this.browser.liveViewUrl) throw new Error("this browser has no live view for the user to log in with");
+
+            log.info(`session ${this.id}`, `login handoff open for ${host} — waiting up to ${LOGIN_TIMEOUT_MS / 60_000}min for the user`);
+            this.emit({ type: "needs_login", url: this.browser.liveViewUrl, domain: host });
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const confirmed = await new Promise<boolean>((resolve) => {
+              this.loginResolve = resolve;
+              timer = setTimeout(() => resolve(false), LOGIN_TIMEOUT_MS);
+            });
+            clearTimeout(timer);
+            this.loginResolve = null;
+            log.info(`session ${this.id}`, `login handoff for ${host} ${confirmed ? "confirmed by the user" : "timed out"}`);
+            this.emit({ type: "login_done" });
+
+            if (!confirmed) {
+              await this.browser?.close().catch(() => {});
+              this.browser = null;
+              return {
+                ...text("The user did not finish logging in within 10 minutes; the login window was closed. Ask whether to try again."),
+                isError: true,
+              };
+            }
+            this.lastObs = await this.browser.observe();
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `The user finished logging in — the browser stays signed in for the recording${profileSaved ? `, and the session is saved for future demos on ${host}` : ` (this recording only — saved logins are not available on this plan)`}. Nothing was recorded. Current page:\n\n${observationText(this.lastObs)}\n\nConfirm the plan with the user, then call start_demo.`,
+                },
+                { type: "image", data: this.lastObs.shot!, mimeType: "image/jpeg" },
+              ],
+            };
+          } catch (err) {
+            this.loginResolve = null;
+            await this.browser?.close().catch(() => {});
+            this.browser = null;
+            const msg = err instanceof Error ? err.message : String(err);
+            log.error(`session ${this.id}`, `request_login failed: ${msg}`);
+            return { ...text(`request_login failed: ${msg}`), isError: true };
+          }
+        },
+      },
+
       start_demo: {
         description: "Open a recorded cloud browser at the start URL and begin the demo. Returns the initial page observation. Only call after the user confirmed the plan.",
         inputSchema: { type: "object", properties: {} },
         execute: async (): Promise<ToolResult> => {
           this.noteToolCall("roll");
           if (!this.params) return { ...text("No demo params saved — call set_demo_params first."), isError: true };
-          if (this.browser) return { ...text("A demo is already in progress."), isError: true };
+          if (this.browser && this.job) return { ...text("A demo is already in progress."), isError: true };
           try {
             await assertRunQuota(this.userId);
           } catch (err) {
@@ -285,11 +418,20 @@ export class AgentSession {
             this.actionCount = 0;
             this.captions = [];
             this.steps = [{ action: "goto", url: this.params.startUrl, caption: "Open the page", waitAfter: 600 }];
+            log.info(`job ${this.job.id}`, `created (session ${this.id}, start ${this.params.startUrl}, goal "${clip(this.params.goal)}")`);
             this.emit({ type: "job_created", jobId: this.job.id, goal: this.job.goal, startUrl: this.job.startUrl });
 
             const framesDir = path.join(jobDir(this.job.id), "frames");
-            this.browser = await BrowserSession.create(framesDir);
-            this.jobStartedAt = Date.now();
+            if (this.browser) {
+              // Login-handoff browser from request_login — it carries the
+              // user's signed-in session; just point it at the job's frames.
+              this.browser.setFramesDir(framesDir);
+            } else {
+              // No handoff this time: load the saved login for this site when
+              // one exists (read-only — recordings never write the profile).
+              this.browser = await BrowserSession.create(framesDir, undefined, await this.loginProfileFor(this.params.startUrl));
+              this.jobStartedAt = Date.now();
+            }
             this.job.liveViewUrl = this.browser.liveViewUrl;
             if (this.browser.liveViewUrl) {
               this.emit({ type: "live_view", jobId: this.job.id, url: this.browser.liveViewUrl });
@@ -301,6 +443,7 @@ export class AgentSession {
             const nav = await this.browser.act({ action: "goto", url: this.params.startUrl });
             if (!nav.ok) throw new Error(`could not open ${this.params.startUrl}: ${nav.error}`);
             await this.browser.startRecording({ width: OUTPUT.width, height: OUTPUT.height, quality: OUTPUT.quality });
+            log.info(`job ${this.job.id}`, `recording started (live view: ${this.browser.liveViewUrl ?? "none"})`);
             this.captions.push({ t: 0, text: "Open the page" });
             this.lastObs = await this.browser.observe();
             this.emit({ type: "action", jobId: this.job.id, n: 0, action: "goto", caption: "Open the page", ok: true });
@@ -358,6 +501,11 @@ export class AgentSession {
           this.steps.push(stepFromAction(a, obsBefore));
           this.lastObs = await this.browser.observe(false);
 
+          const detail = a.action === "goto" ? ` ${a.url}` : a.targetIndex != null ? ` #${a.targetIndex}` : "";
+          log.info(
+            `job ${this.job.id}`,
+            `action ${this.actionCount}/${MAX_ACTIONS} ${a.action}${detail} → ${result.ok ? "ok" : `FAILED: ${result.error}`} @ ${result.url}`,
+          );
           this.job.actions.push({ n: this.actionCount, action: a.action, caption: a.caption ?? "", ok: result.ok, error: result.error });
           this.emit({
             type: "action", jobId: this.job.id, n: this.actionCount,
@@ -407,7 +555,7 @@ export class AgentSession {
           // Stage-by-stage visibility for the composing overlay and fly logs;
           // events also feed the SSE stream and the headless-run watchdog.
           const stage = (name: string, pct?: number) => {
-            console.log(`[job ${job.id}] compose: ${name}${pct != null ? ` ${(pct * 100).toFixed(0)}%` : ""}`);
+            log.info(`job ${job.id}`, `compose: ${name}${pct != null ? ` ${(pct * 100).toFixed(0)}%` : ""}`);
             this.emit({ type: "compose_progress", jobId: job.id, stage: name, pct });
           };
           try {
@@ -465,7 +613,7 @@ export class AgentSession {
             job.videoUrl = await uploadVideo(job.id, out.finalPath);
             // Best-effort: a finished video without a poster frame is still a video.
             job.thumbUrl = await uploadThumbnail(job.id, out.thumbPath).catch((err) => {
-              console.error(`[job ${job.id}] thumbnail upload failed:`, err instanceof Error ? err.message : err);
+              log.error(`job ${job.id}`, "thumbnail upload failed", err instanceof Error ? err.message : err);
               return undefined;
             });
 
@@ -482,6 +630,11 @@ export class AgentSession {
             job.status = "done";
             job.videoPath = out.finalPath;
             job.durationSec = out.durationSec;
+            log.info(
+              `job ${job.id}`,
+              `done — ${out.durationSec.toFixed(1)}s video from ${out.frameCount} frames ` +
+                `(browser ${job.usage.browserSec ?? "?"}s, compose ${job.usage.composeSec}s) → ${job.videoUrl ?? out.finalPath}`,
+            );
             this.emit({ type: "job_status", jobId: job.id, status: "done" });
             this.emit({
               type: "video_ready",
@@ -502,10 +655,32 @@ export class AgentSession {
           }
         },
       },
+
+      abort_demo: {
+        description:
+          "Abort the current recording WITHOUT producing a video — e.g. a login wall or broken page blocks the goal. Explain what happened to the user afterwards.",
+        inputSchema: {
+          type: "object",
+          properties: { reason: { type: "string", description: "Short reason, shown to the user." } },
+          required: ["reason"],
+        },
+        execute: async (args: any): Promise<ToolResult> => {
+          this.noteToolCall("cut");
+          if (!this.job) return { ...text("No demo in progress."), isError: true };
+          await this.failJob(String(args.reason ?? "").trim() || "aborted by the agent");
+          return text(JSON.stringify({
+            aborted: true,
+            next: "Tell the user why. If a login was required, offer request_login and a re-record.",
+          }));
+        },
+      },
     };
   }
 
   async dispose(): Promise<void> {
+    // Unblock a request_login turn waiting on the user; it cleans up its browser.
+    this.loginResolve?.(false);
+    this.loginResolve = null;
     await this.browser?.close().catch(() => {});
     this.browser = null;
     try {
@@ -542,7 +717,7 @@ function noteInstantAgentFailure(): boolean {
   instantFailures.push(now);
   if (instantFailures.length < 2) return false;
   if ([...sessions.values()].some((s) => s.hasActiveJob)) return false;
-  console.error("[health] repeated instant agent-run failures with no active jobs — exiting for a clean restart");
+  log.error("health", "repeated instant agent-run failures with no active jobs — exiting for a clean restart");
   setTimeout(async () => {
     try {
       await flushDb();

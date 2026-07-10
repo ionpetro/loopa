@@ -8,6 +8,7 @@
  * failures are logged, never thrown: a DB outage must not break a recording.
  */
 import pg from "pg";
+import { log } from "./log.ts";
 import type { ChatPart, DemoJob } from "./types.ts";
 
 export interface RunRecord {
@@ -114,7 +115,7 @@ function ensureSchema(): Promise<void> {
 }
 
 function logDbError(op: string, err: unknown) {
-  console.error(`[db] ${op} failed:`, err instanceof Error ? err.message : err);
+  log.error("db", `${op} failed`, err instanceof Error ? err.message : err);
 }
 
 /**

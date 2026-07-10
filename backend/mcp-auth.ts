@@ -11,6 +11,7 @@
  */
 import http from "node:http";
 import { createClerkClient, type ClerkClient } from "@clerk/backend";
+import { log } from "../src/engine/log.ts";
 
 function publishableKey(): string | undefined {
   return process.env.CLERK_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
@@ -85,15 +86,16 @@ export async function authorizeMcp(req: http.IncomingMessage): Promise<McpAuth |
         return { userId: auth.userId ?? undefined, clientId: auth.clientId ?? undefined };
       }
     } catch (err) {
-      console.error("[mcp-auth] token verification failed:", err instanceof Error ? err.message : err);
+      log.error("mcp-auth", "token verification failed", err instanceof Error ? err.message : err);
     }
     return null;
   }
 
   if (process.env.MCP_ALLOW_ANONYMOUS === "1") return {};
   if (!oauthConfigured() && !staticToken) {
-    console.error(
-      "[mcp-auth] rejecting /mcp request: no auth configured. Set CLERK_SECRET_KEY + CLERK_PUBLISHABLE_KEY " +
+    log.error(
+      "mcp-auth",
+      "rejecting /mcp request: no auth configured. Set CLERK_SECRET_KEY + CLERK_PUBLISHABLE_KEY " +
         "(OAuth) or MCP_AUTH_TOKEN (static bearer), or MCP_ALLOW_ANONYMOUS=1 for bare local runs.",
     );
   }
@@ -134,7 +136,7 @@ export async function authServerMetadata(): Promise<Record<string, unknown> | nu
     authServerMetadataCache = (await res.json()) as Record<string, unknown>;
     return authServerMetadataCache;
   } catch (err) {
-    console.error("[mcp-auth] failed to fetch Clerk auth server metadata:", err instanceof Error ? err.message : err);
+    log.error("mcp-auth", "failed to fetch Clerk auth server metadata", err instanceof Error ? err.message : err);
     return null;
   }
 }

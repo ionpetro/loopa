@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { chromium, type Browser, type CDPSession, type Locator, type Page } from "playwright-core";
-import { createKernelBrowser, deleteKernelBrowser } from "./kernel.ts";
+import { createKernelBrowser, deleteKernelBrowser, type KernelProfileRef } from "./kernel.ts";
+import { log, since } from "./log.ts";
 import type { ActionResult, BrowserAction, FrameRef, Observation } from "./types.ts";
 
 const MAX_FRAMES = 4000; // ~5-6 min of screencast at ~10fps — runaway-job backstop
@@ -166,21 +167,39 @@ export class BrowserSession {
     this.framesDir = framesDir;
   }
 
-  static async create(framesDir: string, viewport = { width: 1280, height: 800 }): Promise<BrowserSession> {
-    const kb = await createKernelBrowser(viewport);
+  static async create(
+    framesDir: string,
+    viewport = { width: 1280, height: 800 },
+    profile?: KernelProfileRef,
+  ): Promise<BrowserSession> {
+    const startedAt = Date.now();
+    log.info("browser", `creating Kernel browser${profile ? ` (profile ${profile.name}${profile.saveChanges ? ", writable" : ""})` : ""}…`);
+    const kb = await createKernelBrowser(viewport, profile);
     let browser: Browser;
     try {
       const cdpTimeout = Number(process.env.CDP_CONNECT_TIMEOUT_MS) || 30_000;
       browser = await chromium.connectOverCDP(kb.cdpWsUrl, { timeout: cdpTimeout });
     } catch (err) {
+      log.error(`browser ${kb.sessionId}`, "CDP connect failed — deleting the Kernel browser", err);
       await deleteKernelBrowser(kb.sessionId);
       throw err;
     }
+    log.info(`browser ${kb.sessionId}`, `ready in ${since(startedAt)}`);
     const context = browser.contexts()[0] ?? (await browser.newContext());
     const page = context.pages()[0] ?? (await context.newPage());
     await page.addInitScript(CURSOR_SCRIPT);
     fs.mkdirSync(framesDir, { recursive: true });
     return new BrowserSession(kb.sessionId, kb.liveViewUrl, browser, page, framesDir);
+  }
+
+  /**
+   * Repoint frame capture at a new directory. A login-handoff browser is
+   * created before its job exists, so its real frames dir arrives at start_demo.
+   */
+  setFramesDir(dir: string): void {
+    if (this.recording) throw new Error("cannot move framesDir while recording");
+    fs.mkdirSync(dir, { recursive: true });
+    this.framesDir = dir;
   }
 
   /** ms since recording started (0 if not yet recording). */
@@ -198,6 +217,9 @@ export class BrowserSession {
       const file = path.join(this.framesDir, `f_${String(this.frames.length).padStart(5, "0")}.jpg`);
       fs.writeFile(file, Buffer.from(f.data, "base64"), () => {});
       this.frames.push({ t: Date.now() - this.recStart, file });
+      if (this.frames.length === MAX_FRAMES) {
+        log.warn(`browser ${this.sessionId}`, `frame cap of ${MAX_FRAMES} reached — dropping further screencast frames`);
+      }
       this.cdp?.send("Page.screencastFrameAck", { sessionId: f.sessionId }).catch(() => {});
     });
     await this.cdp.send("Page.startScreencast", {
@@ -212,6 +234,7 @@ export class BrowserSession {
   async stopRecording(): Promise<FrameRef[]> {
     if (!this.recording) return this.frames;
     this.recording = false;
+    log.info(`browser ${this.sessionId}`, `screencast stopped — ${this.frames.length} frames over ${since(this.recStart)}`);
     try {
       await this.cdp?.send("Page.stopScreencast");
     } catch {}
@@ -311,7 +334,7 @@ export class BrowserSession {
           const b = await el!.screenshot({ omitBackground: true, type: "png", timeout: 10_000 });
           return b.toString("base64");
         } catch (err) {
-          console.error("[overlays] card render failed, using blank:", err instanceof Error ? err.message.split("\n")[0] : err);
+          log.error("overlays", "card render failed, using blank", err instanceof Error ? err.message.split("\n")[0] : err);
           return BLANK;
         }
       };
@@ -336,5 +359,6 @@ export class BrowserSession {
       await this.browser.close();
     } catch {}
     await deleteKernelBrowser(this.sessionId);
+    log.info(`browser ${this.sessionId}`, "closed");
   }
 }

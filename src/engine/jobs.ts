@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { persistJob } from "./db.ts";
+import { log } from "./log.ts";
 import { writableDataDir } from "./paths.ts";
 import type { DemoJob } from "./types.ts";
 
@@ -38,7 +39,7 @@ export function sweepOldJobDirs(maxAgeMs = 24 * 60 * 60 * 1000): void {
       }
     } catch {}
   }
-  if (removed) console.log(`[jobs] swept ${removed} job dir(s) older than ${Math.round(maxAgeMs / 3600000)}h`);
+  if (removed) log.info("jobs", `swept ${removed} job dir(s) older than ${Math.round(maxAgeMs / 3600000)}h`);
 }
 
 // Pinned to globalThis so Next.js dev-mode HMR doesn't wipe live jobs.

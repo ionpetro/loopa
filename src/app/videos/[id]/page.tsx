@@ -5,8 +5,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { CheckIcon, ClapperboardIcon, DownloadIcon, LinkIcon } from "lucide-react";
 
-import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Button } from "@/components/ui/button";
+import { LoopaLoader } from "@/components/loopa-loader";
 import { StudioHeader } from "@/components/studio-header";
 import { DemoPlayer, type VideoChapter } from "@/components/demo-player";
 import { apiUrl } from "@/lib/api-base";
@@ -46,7 +46,7 @@ export default function WatchPage() {
   };
 
   return (
-    <div className="min-h-screen bg-bg-deep">
+    <div className="min-h-screen bg-background dark:bg-bg-deep">
       <StudioHeader />
 
       <main className="mx-auto max-w-5xl px-6 py-10">
@@ -62,7 +62,7 @@ export default function WatchPage() {
 
         {!data && !missing && (
           <div className="flex justify-center py-32">
-            <Shimmer className="font-mono text-xs uppercase tracking-[0.3em]">— loading —</Shimmer>
+            <LoopaLoader className="h-8 text-muted-foreground" />
           </div>
         )}
 

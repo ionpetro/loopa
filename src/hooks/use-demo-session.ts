@@ -17,6 +17,7 @@ export interface ChatMessage {
 export type StageState =
   | { mode: "idle" }
   | { mode: "plan"; goal: string; startUrl: string }
+  | { mode: "login"; liveViewUrl: string; domain: string }
   | { mode: "live"; jobId: string; liveViewUrl?: string; composing: boolean }
   | { mode: "done"; jobId: string; videoUrl: string; durationSec: number; chapters?: { title: string; start: number }[] };
 
@@ -37,6 +38,8 @@ type SessionEvent =
   | { type: "agent_turn_done" }
   | { type: "tool_call"; name: string }
   | { type: "plan"; goal: string; startUrl: string }
+  | { type: "needs_login"; url: string; domain: string }
+  | { type: "login_done" }
   | { type: "job_created"; jobId: string }
   | { type: "live_view"; url: string }
   | { type: "action"; n: number; action: string; caption: string; ok: boolean }
@@ -84,12 +87,15 @@ export function useDemoSession() {
   const [ticks, setTicks] = useState<Tick[]>([]);
   const [compose, setCompose] = useState<ComposeProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [authRequired, setAuthRequired] = useState(false);
   const [recStart, setRecStart] = useState<number | null>(null);
   const [model, setModel] = useState("composer-2.5");
 
   const sessionIdRef = useRef<string | null>(null);
   const busyRef = useRef(false);
   const liveJobRef = useRef<string | null>(null);
+  // Last locked plan — the stage returns here when a login handoff finishes.
+  const planRef = useRef<{ goal: string; startUrl: string } | null>(null);
   const { getToken } = useAuth();
 
   /**
@@ -151,7 +157,14 @@ export function useDemoSession() {
           setBusy(false);
           break;
         case "plan":
+          planRef.current = { goal: ev.goal, startUrl: ev.startUrl };
           setStage({ mode: "plan", goal: ev.goal, startUrl: ev.startUrl });
+          break;
+        case "needs_login":
+          setStage({ mode: "login", liveViewUrl: ev.url, domain: ev.domain });
+          break;
+        case "login_done":
+          setStage(planRef.current ? { mode: "plan", ...planRef.current } : { mode: "idle" });
           break;
         case "job_created":
           setTicks([]);
@@ -195,12 +208,32 @@ export function useDemoSession() {
     [pushAssistantPart],
   );
 
+  /** Tell a blocked request_login that the user finished logging in. */
+  const confirmLogin = useCallback(async () => {
+    const sessionId = sessionIdRef.current;
+    if (!sessionId) return;
+    try {
+      const token = await getToken().catch(() => null);
+      const res = await fetch(apiUrl(`/api/session/${sessionId}/login-done`), {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as { error?: string }).error ?? `request failed (${res.status})`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [getToken]);
+
   const send = useCallback(
     async (text: string) => {
       const message = text.trim();
       if (!message || busyRef.current) return;
       busyRef.current = true;
       setError(null);
+      setAuthRequired(false);
       setBusy(true);
       setMessages((ms) => [...ms, { id: uid("u"), role: "user", parts: [{ type: "text", text: message }] }]);
 
@@ -218,6 +251,13 @@ export function useDemoSession() {
         });
 
         if (!res.ok) {
+          // Signed-out users get a sign-up prompt in chat, not an error banner.
+          if (res.status === 401) {
+            busyRef.current = false;
+            setBusy(false);
+            setAuthRequired(true);
+            return;
+          }
           const body = await res.json().catch(() => ({}));
           throw new Error((body as { error?: string }).error ?? `request failed (${res.status})`);
         }
@@ -242,5 +282,5 @@ export function useDemoSession() {
     [handleEvent, getToken, recoverJob, model],
   );
 
-  return { messages, busy, stage, setStage, ticks, compose, error, recStart, send, model, setModel };
+  return { messages, busy, stage, setStage, ticks, compose, error, authRequired, recStart, send, confirmLogin, model, setModel };
 }

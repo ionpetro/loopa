@@ -7,13 +7,14 @@ import http from "node:http";
 import path from "node:path";
 import { verifyToken } from "@clerk/backend";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { disposeAllSessions, getOrCreateSession } from "../src/engine/agent-session.ts";
+import { disposeAllSessions, getOrCreateSession, getSession } from "../src/engine/agent-session.ts";
 import { failStaleWork, flushDb } from "../src/engine/db.ts";
 import type { SessionEvent } from "../src/engine/types.ts";
 import { jobDir, sweepOldJobDirs } from "../src/engine/jobs.ts";
 import { failAllActiveRuns, loadDemoRun } from "../src/engine/headless-run.ts";
 import { listUserJobs, loadJobRecord } from "../src/engine/db.ts";
 import { getAuthor } from "../src/engine/author.ts";
+import { log } from "../src/engine/log.ts";
 import { buildMcpServer } from "./mcp.ts";
 import { authorizeMcp, authServerMetadata, protectedResourceMetadata, wwwAuthenticate } from "./mcp-auth.ts";
 
@@ -73,7 +74,7 @@ function publicBase(req: http.IncomingMessage): string {
   const fromEnv = (process.env.PUBLIC_URL ?? "").replace(/\/$/, "");
   if (fromEnv) return fromEnv;
   const proto = (req.headers["x-forwarded-proto"] as string)?.split(",")[0] ?? "http";
-  return `${proto}://${req.headers.host ?? `localhost:${PORT}`}`;
+  return `${proto}://${req.headers.host ?? `localhost:${boundPort}`}`;
 }
 
 /**
@@ -280,6 +281,23 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     return;
   }
 
+  // The login-handoff Continue button: resolves a pending request_login wait.
+  const loginDoneMatch = pathname.match(/^\/api\/session\/(sess-[a-z0-9-]+)\/login-done$/);
+  if (req.method === "POST" && loginDoneMatch) {
+    const userId = await clerkUserId(req);
+    if (userId === null) {
+      json(res, 401, { error: "sign in required" }, origin);
+      return;
+    }
+    const session = getSession(loginDoneMatch[1]);
+    if (!session?.confirmLogin()) {
+      json(res, 409, { error: "no login pending" }, origin);
+      return;
+    }
+    json(res, 200, { ok: true }, origin);
+    return;
+  }
+
   const sessionMatch = pathname.match(/^\/api\/session\/(sess-[a-z0-9-]+)$/);
   if (req.method === "POST" && sessionMatch) {
     if (!process.env.CURSOR_API_KEY || !process.env.KERNEL_API_KEY) {
@@ -399,14 +417,37 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 }
 
 const server = http.createServer((req, res) => {
+  const startedAt = Date.now();
+  res.on("finish", () => {
+    // /health is hit by the platform every few seconds — pure noise.
+    if (req.url === "/health" || req.method === "OPTIONS") return;
+    log.info("http", `${req.method} ${req.url} → ${res.statusCode} in ${Date.now() - startedAt}ms`);
+  });
   handle(req, res).catch((err) => {
-    console.error(err);
+    log.error("http", `${req.method} ${req.url} unhandled error`, err);
     if (!res.headersSent) json(res, 500, { error: "internal error" });
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`demo-studio backend listening on :${PORT}`);
+// Fall forward when the port is taken (a stale dev process, another local
+// server) instead of dying — but only off the default; an explicitly
+// configured PORT (Fly, docker port maps) must bind exactly or fail loudly.
+let boundPort = PORT;
+let portFallbacksLeft = process.env.PORT ? 0 : 10;
+server.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code === "EADDRINUSE" && portFallbacksLeft > 0) {
+    portFallbacksLeft--;
+    log.warn("http", `port ${boundPort} is in use — trying ${boundPort + 1}`);
+    boundPort++;
+    setTimeout(() => server.listen(boundPort), 100);
+    return;
+  }
+  log.error("http", "server failed to start", err);
+  process.exit(1);
+});
+
+server.listen(boundPort, () => {
+  log.info("http", `demo-studio backend listening on :${boundPort}`);
   // Reclaim disk from old job dirs left by prior processes on this box.
   sweepOldJobDirs();
   // Boot reconciliation: a hard crash (OOM/SIGKILL) skips graceful shutdown,
@@ -414,7 +455,7 @@ server.listen(PORT, () => {
   // forever. Nothing from a previous process can still be running.
   void failStaleWork("backend restarted while this was in progress — submit the demo again").then((res) => {
     if (res && (res.jobs || res.runs)) {
-      console.log(`[boot] failed ${res.jobs} stale job(s) and ${res.runs} stale run(s) from a previous process`);
+      log.info("boot", `failed ${res.jobs} stale job(s) and ${res.runs} stale run(s) from a previous process`);
     }
   });
 });
@@ -425,7 +466,7 @@ let shuttingDown = false;
 async function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`${signal} — failing open jobs and closing browsers before exit`);
+  log.info("shutdown", `${signal} — failing open jobs and closing browsers before exit`);
   const deadline = setTimeout(() => process.exit(1), 20_000);
   try {
     await disposeAllSessions("backend restarted mid-recording (deploy) — please run the demo again");

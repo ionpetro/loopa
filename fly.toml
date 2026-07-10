@@ -9,6 +9,8 @@ kill_timeout = "30s"
 [env]
   PORT = "3001"
   PUBLIC_URL = "https://demo-studio-backend.fly.dev"
+  # Web-app base for watch-page links (also joins the CORS allowlist).
+  FRONTEND_URL = "https://demo-studio-three.vercel.app"
 
 [http_service]
   internal_port = 3001

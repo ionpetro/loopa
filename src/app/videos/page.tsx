@@ -5,8 +5,8 @@ import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import { ClapperboardIcon, PlayIcon } from "lucide-react";
 
-import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Button } from "@/components/ui/button";
+import { LoopaLoader } from "@/components/loopa-loader";
 import { StudioHeader } from "@/components/studio-header";
 import { apiUrl } from "@/lib/api-base";
 import { timeAgo } from "@/lib/timeago";
@@ -47,7 +47,7 @@ export default function VideosPage() {
   }, [getToken]);
 
   return (
-    <div className="min-h-screen bg-bg-deep">
+    <div className="min-h-screen bg-background dark:bg-bg-deep">
       <StudioHeader />
 
       <main className="mx-auto max-w-6xl px-6 py-10">
@@ -55,7 +55,7 @@ export default function VideosPage() {
 
         {!videos && !error && (
           <div className="flex justify-center py-32">
-            <Shimmer className="font-mono text-xs uppercase tracking-[0.3em]">— loading —</Shimmer>
+            <LoopaLoader className="h-8 text-muted-foreground" />
           </div>
         )}
 
@@ -75,7 +75,7 @@ export default function VideosPage() {
               <Link
                 key={v.id}
                 href={`/videos/${v.id}`}
-                className="group flex flex-col overflow-hidden rounded-xl border bg-background"
+                className="group flex flex-col overflow-hidden rounded-xl border bg-card dark:bg-background"
               >
                 <div className="relative aspect-video bg-black">
                   {/* Poster spares the grid a metadata fetch per tile; older videos without one keep the first-frame fallback. */}

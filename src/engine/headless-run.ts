@@ -8,6 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { getOrCreateSession } from "./agent-session.ts";
 import { loadRunRecord, persistRun } from "./db.ts";
+import { clip, log, since } from "./log.ts";
 import { assertRunQuota } from "./quota.ts";
 import type { ActionLog, SessionEvent } from "./types.ts";
 
@@ -51,7 +52,9 @@ Do all of this in this single turn:
 3. Record the demo with browser_action calls: shortest clean path, short viewer-facing captions.
 4. When the goal is visibly achieved, call finish_demo with a short title.
 
-If an action fails, recover once and keep going; if the demo cannot be completed, call finish_demo anyway so a partial video is produced.`;
+If an action fails, recover once and keep going; if the demo cannot be completed, call finish_demo anyway so a partial video is produced.
+
+There is no human to log in: never call request_login. If the user has previously logged in to this site through Demo Studio, the browser opens already signed in. If a login wall still blocks the goal, call abort_demo with reason "login required — open ${startUrl} in the Demo Studio app once to save your sign-in" instead of producing a video of a login page.`;
 
 /**
  * One headless run at a time. Three concurrent runs on the shared-cpu-1x box
@@ -96,6 +99,10 @@ export async function startDemoRun(goal: string, startUrl: string, userId?: stri
   const run: DemoRun = { id, goal, startUrl, userId, clientId, status: "planning", actions: [], createdAt: Date.now() };
   runs.set(id, run);
   persistRun(run);
+  log.info(`run ${id}`, `created by ${userId ?? "anon"} — start ${startUrl}, goal "${clip(goal)}"`);
+  if (activeRuns >= MAX_CONCURRENT_RUNS) {
+    log.info(`run ${id}`, `queued behind ${runQueue.length + activeRuns} run(s) — stays "planning" until a slot frees`);
+  }
   void (async () => {
     await acquireRunSlot();
     try {
@@ -117,11 +124,15 @@ async function executeRun(run: DemoRun) {
   // recording started — that would burn a whole take.
   const MAX_ATTEMPTS = 2;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    log.info(`run ${run.id}`, `attempt ${attempt}/${MAX_ATTEMPTS} starting`);
     await runAttempt(run, attempt);
-    if (run.status === "done") return;
+    if (run.status === "done") {
+      log.info(`run ${run.id}`, `done in ${since(run.createdAt)} — ${run.durationSec ?? "?"}s video (job ${run.jobId})`);
+      return;
+    }
     if (run.jobId || run.actions.length) break;
     if (attempt < MAX_ATTEMPTS) {
-      console.warn(`[run ${run.id}] attempt ${attempt} failed before recording (${run.error ?? "no detail"}) — retrying`);
+      log.warn(`run ${run.id}`, `attempt ${attempt} failed before recording (${run.error ?? "no detail"}) — retrying`);
       run.status = "planning";
       run.error = undefined;
       persistRun(run);
@@ -131,6 +142,7 @@ async function executeRun(run: DemoRun) {
     run.status = "error";
     run.error ??= "run ended without producing a video";
   }
+  log.error(`run ${run.id}`, `failed after ${since(run.createdAt)}: ${run.error}`);
   persistRun(run);
 }
 
@@ -162,6 +174,7 @@ function runAttempt(run: DemoRun, attempt: number): Promise<void> {
       clearInterval(watchdog);
       run.status = "error";
       run.error = `run stalled — no agent activity for ${Math.round(STALL_MS / 60_000)} minutes`;
+      log.error(`run ${run.id}`, `watchdog: ${run.error} — tearing the session down`);
       persistRun(run);
       // abort (not dispose): fails the open job so demo_jobs doesn't keep a
       // zombie "recording" row — dispose alone also disarms handleMessage's
@@ -175,6 +188,7 @@ function runAttempt(run: DemoRun, attempt: number): Promise<void> {
     if (ev.type === "job_created") {
       run.jobId = ev.jobId;
       run.status = "recording";
+      log.info(`run ${run.id}`, `recording as job ${ev.jobId}`);
     } else if (ev.type === "live_view") {
       run.liveViewUrl = ev.url;
     } else if (ev.type === "action") {
