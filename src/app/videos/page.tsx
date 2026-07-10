@@ -6,7 +6,7 @@ import { useAuth } from "@clerk/nextjs";
 import { ClapperboardIcon, PlayIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { LoopaLoader } from "@/components/loopa-loader";
+import { Skeleton } from "@/components/ui/skeleton";
 import { StudioHeader } from "@/components/studio-header";
 import { apiUrl } from "@/lib/api-base";
 import { timeAgo } from "@/lib/timeago";
@@ -54,8 +54,16 @@ export default function VideosPage() {
         {error && <p className="py-20 text-center font-mono text-xs text-rec">{error}</p>}
 
         {!videos && !error && (
-          <div className="flex justify-center py-32">
-            <LoopaLoader className="h-8 text-muted-foreground" />
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="flex flex-col overflow-hidden rounded-xl border bg-card dark:bg-background">
+                <Skeleton className="aspect-video rounded-none" />
+                <div className="flex flex-col gap-2 p-3.5">
+                  <Skeleton className="h-4 w-4/5" />
+                  <Skeleton className="h-2.5 w-24" />
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
