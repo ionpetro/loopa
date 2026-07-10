@@ -131,18 +131,15 @@
 .loopa-logo {
   color: var(--ink);
 }
-.loopa-static-ring,
 .loopa-o {
   fill: none;
   stroke: currentColor;
   stroke-width: 12.06;
   stroke-linecap: round;
-}
-.loopa-o {
   stroke-dasharray: 100 0;
 }
 .loopa-logo.is-looping .loopa-o {
-  animation: loopa-loop-once 1.1s cubic-bezier(0.65, 0.05, 0.35, 1) both;
+  animation: loopa-loop-once 1.1s cubic-bezier(0.55, 0.06, 0.35, 0.95) both;
 }
 .loopa-logo.is-looping .loopa-o--rev {
   animation-name: loopa-loop-once-rev;
@@ -152,17 +149,17 @@
   0%   { stroke-dasharray: 100 0; stroke-dashoffset: 0; }
   18%  { stroke-dasharray: 72 28; }
   82%  { stroke-dasharray: 72 28; }
-  100% { stroke-dasharray: 100 0; stroke-dashoffset: 100; }
+  100% { stroke-dasharray: 100 0; stroke-dashoffset: -100; }
 }
 @keyframes loopa-loop-once-rev {
   0%   { stroke-dasharray: 100 0; stroke-dashoffset: 0; }
   18%  { stroke-dasharray: 72 28; }
   82%  { stroke-dasharray: 72 28; }
-  100% { stroke-dasharray: 100 0; stroke-dashoffset: -100; }
+  100% { stroke-dasharray: 100 0; stroke-dashoffset: 100; }
 }
 /* loader variant: the same revolution, looping forever */
 .loopa-loader .loopa-o {
-  animation: loopa-loop-once 1.1s cubic-bezier(0.65, 0.05, 0.35, 1) infinite;
+  animation: loopa-loop-once 1.1s cubic-bezier(0.55, 0.06, 0.35, 0.95) infinite;
 }
 .loopa-loader .loopa-o--rev {
   animation-name: loopa-loop-once-rev;
