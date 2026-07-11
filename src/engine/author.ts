@@ -21,7 +21,7 @@ export async function getAuthor(userId: string | null | undefined): Promise<Auth
       [u.firstName, u.lastName].filter(Boolean).join(" ") ||
       u.username ||
       u.primaryEmailAddress?.emailAddress ||
-      "Demo Studio user";
+      "Loopa user";
     const author = { name, imageUrl: u.imageUrl ?? null };
     cache.set(userId, author);
     return author;

@@ -110,7 +110,7 @@ async function composeVideoNow(input: ComposeInput): Promise<ComposeResult> {
   const W = input.width, H = input.height, FPS = input.fps;
   if (!frames.length) throw new Error("no frames captured");
 
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "demo-studio-"));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "loopa-"));
   fs.mkdirSync(outDir, { recursive: true });
 
   const t0 = frames[0].t;

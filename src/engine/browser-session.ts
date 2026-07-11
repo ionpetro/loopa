@@ -194,7 +194,7 @@ export class BrowserSession {
 
   /**
    * Repoint frame capture at a new directory. A login-handoff browser is
-   * created before its job exists, so its real frames dir arrives at start_demo.
+   * created before its job exists, so its real frames dir arrives at start_loop.
    */
   setFramesDir(dir: string): void {
     if (this.recording) throw new Error("cannot move framesDir while recording");
@@ -306,7 +306,7 @@ export class BrowserSession {
 
   /**
    * Render caption/brand cards as transparent PNGs on a FRESH page — never the
-   * recorded one, which can be left unstable by wherever the demo ended
+   * recorded one, which can be left unstable by wherever the loopa ended
    * (pending navigations, dialogs, SPA re-renders; seen in prod as a 30s
    * "waiting for element to be stable" screenshot timeout).
    */

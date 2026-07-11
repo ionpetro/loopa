@@ -77,10 +77,10 @@ async function* readSseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<
 }
 
 /**
- * Owns the demo-studio session: streaming chat, messages, busy flag, and stage state.
+ * Owns the Loopa session: streaming chat, messages, busy flag, and stage state.
  * Uses a single POST that returns SSE so session state stays on one serverless instance.
  */
-export function useDemoSession() {
+export function useLoopaSession() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<StageState>({ mode: "idle" });
@@ -264,19 +264,27 @@ export function useDemoSession() {
 
         if (!res.body) throw new Error("no response stream");
 
+        const ct = res.headers.get("content-type") ?? "";
+        if (!ct.includes("text/event-stream")) {
+          throw new Error(`expected event stream, got ${ct || res.status}`);
+        }
+
         for await (const ev of readSseEvents(res.body)) {
           handleEvent(ev);
         }
       } catch (err) {
-        busyRef.current = false;
-        setBusy(false);
         const jobId = liveJobRef.current;
         if (jobId) {
-          setError("connection dropped — waiting for the studio to finish the cut…");
+          setError("connection dropped — waiting for Loopa to finish the cut…");
           if (await recoverJob(jobId)) return;
         }
         setError(err instanceof Error ? err.message : String(err));
-        throw err;
+      } finally {
+        // Stream can close without agent_turn_done (e.g. Clerk middleware HTML 404).
+        if (busyRef.current) {
+          busyRef.current = false;
+          setBusy(false);
+        }
       }
     },
     [handleEvent, getToken, recoverJob, model],

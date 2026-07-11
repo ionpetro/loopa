@@ -36,9 +36,9 @@ import { Shimmer } from "@/components/ai-elements/shimmer";
 import { WebPreview, WebPreviewBody, WebPreviewNavigation, WebPreviewUrl } from "@/components/ai-elements/web-preview";
 import { Button } from "@/components/ui/button";
 import { StudioHeader } from "@/components/studio-header";
-import { DemoPlayer } from "@/components/demo-player";
+import { LoopaPlayer } from "@/components/demo-player";
 import { LoopaLoader } from "@/components/loopa-loader";
-import { useDemoSession, type ChatMessage, type ChatPart } from "@/hooks/use-demo-session";
+import { useLoopaSession, type ChatMessage, type ChatPart } from "@/hooks/use-demo-session";
 import { apiBase } from "@/lib/api-base";
 import { cn } from "@/lib/utils";
 
@@ -68,14 +68,14 @@ function Timecode({ ms }: { ms: number }) {
 }
 
 function agentInstructions(): string {
-  const base = apiBase() || "http://localhost:3001";
-  return `I'd like you to set up Demo Studio: browser demo videos recorded by agents.
+  const base = apiBase() || "https://api.loopa.sh";
+  return `I'd like you to set up loopa.sh: a cloud agent recorder for browser loopas.
 
 Add the MCP server: ${base}/mcp
 
-Install the /record-demo skill: npx skills add ionpetro/demo-studio
+Install the /record-loopa skill: npx skills add ionpetro/loopa
 
-Then try this prompt: Use Demo Studio to record a short demo video of the most recent user-facing change. Pick the deployed page it affects as the start URL, describe the goal in one or two sentences, and create the video. Then add a comment on the PR with the watch URL.`;
+Then try this prompt: Use loopa.sh to record a short loopa of the most recent user-facing change. Pick the deployed page it affects as the start URL, describe the goal in one or two sentences, and create the loopa. Then add a comment on the PR with the watch URL.`;
 }
 
 function CopyAgentInstructions() {
@@ -100,7 +100,7 @@ function CopyAgentInstructions() {
 
 /** Friendly labels for tool calls surfaced in chat; unknown names fall back to the raw name. */
 const TOOL_LABELS: Record<string, string> = {
-  // studio tools
+  // loopa tools
   plan: "locking the shot list",
   login: "waiting for sign-in",
   roll: "rolling camera",
@@ -183,7 +183,7 @@ const MODELS = [
 ];
 
 export default function Home() {
-  const { messages, busy, stage, setStage, ticks, compose, error, authRequired, recStart, send, confirmLogin, model, setModel } = useDemoSession();
+  const { messages, busy, stage, setStage, ticks, compose, error, authRequired, recStart, send, confirmLogin, model, setModel } = useLoopaSession();
   const [clock, setClock] = useState(0);
   const [input, setInput] = useState("");
 
@@ -537,7 +537,7 @@ export default function Home() {
 
             {stage.mode === "done" && (
               <Fragment>
-                <DemoPlayer className="rounded-none border-0" src={stage.videoUrl} chapters={stage.chapters} />
+                <LoopaPlayer className="rounded-none border-0" src={stage.videoUrl} chapters={stage.chapters} />
                 <div className="flex items-center justify-between border-t px-4 py-3">
                   <span className="font-mono text-xs text-muted-foreground">
                     <b className="text-ok">wrap ✓</b> · {stage.durationSec.toFixed(1)}s · 1280×720 ·

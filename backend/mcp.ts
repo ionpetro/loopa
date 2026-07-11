@@ -1,6 +1,6 @@
 /**
- * MCP server for Demo Studio — lets external coding agents (Claude Code,
- * Cursor, Codex, …) request demo videos over streamable HTTP at /mcp.
+ * MCP server for Loopa — lets external coding agents (Claude Code,
+ * Cursor, Codex, …) request loopas over streamable HTTP at /mcp.
  *
  * Stateless: a fresh McpServer + transport is created per request, so no MCP
  * session affinity is needed. Runs themselves live in the engine's run
@@ -8,7 +8,7 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { startDemoRun, loadDemoRun, type DemoRun } from "../src/engine/headless-run.ts";
+import { startLoopaRun, loadLoopaRun, type LoopaRun } from "../src/engine/headless-run.ts";
 import { loadJobRecord } from "../src/engine/db.ts";
 import { clip, log } from "../src/engine/log.ts";
 
@@ -32,7 +32,7 @@ function isShareableBase(baseUrl: string): boolean {
 
 const LOCAL_LINK_NOTE =
   "This watchUrl only resolves on machines that can reach the local frontend/backend — " +
-  "do NOT paste it into PRs, issues, or chat. When the run is done, get_demo_video returns a " +
+  "do NOT paste it into PRs, issues, or chat. When the run is done, get_loopa returns a " +
   "durable public link if video storage is configured.";
 
 /** Web-app base for watch-page links (FRONTEND_URL may be a comma list for CORS). */
@@ -41,7 +41,7 @@ function frontendBase(): string {
   return first || "http://localhost:3000";
 }
 
-async function runSnapshot(run: DemoRun, baseUrl: string) {
+async function runSnapshot(run: LoopaRun, baseUrl: string) {
   // The watch page is the link agents share: it plays the video with title,
   // chapters, and author once composed. The jobId it's keyed on only exists
   // after recording starts, so until then fall back to the backend run URL.
@@ -72,70 +72,70 @@ async function runSnapshot(run: DemoRun, baseUrl: string) {
 const asText = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] });
 
 export function buildMcpServer(baseUrl: string, userId?: string, clientId?: string): McpServer {
-  const server = new McpServer({ name: "demo-studio", version: "0.1.0" });
+  const server = new McpServer({ name: "loopa", version: "0.1.0" });
 
   server.registerTool(
-    "create_demo_video",
+    "create_loopa",
     {
-      title: "Create demo video",
+      title: "Create loopa",
       description:
-        "Record a short browser demo video. An agent drives a real cloud browser through the goal on a live " +
+        "Record a short cloud agent loopa. An agent drives a real cloud browser through the goal on a live " +
         "web page, captures every frame, and composes a captioned, branded MP4. Returns immediately " +
-        "with a runId; generation takes a few minutes — poll get_demo_video until status is 'done'. " +
-        "Once recording starts, watchUrl is the video's watch page in the Demo Studio web app — that is " +
+        "with a runId; generation takes a few minutes — poll get_loopa until status is 'done'. " +
+        "Once recording starts, watchUrl is the video's watch page in the Loopa web app — that is " +
         "the link to share. Only paste it into PRs, issues, or messages when the response marks it " +
         "shareable: true — a local-only deployment hands out links that only resolve locally. " +
         "Pages behind a login work only if the user has previously signed in to that site through the " +
-        "Demo Studio web app (their saved browser session is reused); otherwise the run fails with " +
+        "Loopa web app (their saved browser session is reused); otherwise the run fails with " +
         "'login required'. " +
         "CAUTION: the agent will follow the goal literally, including submitting forms, and " +
-        "finished videos are viewable by anyone with the link — never include credentials or goals that " +
+        "finished loopas are viewable by anyone with the link — never include credentials or goals that " +
         "pay for anything or destroy data.",
       inputSchema: {
-        goal: z.string().min(1).max(500).describe("What the video should demonstrate, in one or two sentences."),
+        goal: z.string().min(1).max(500).describe("What the loopa should demonstrate, in one or two sentences."),
         startUrl: z
           .string()
           .url()
           .describe(
-            "Full https:// URL of the page where the demo starts. Infer it when the user names a site " +
+            "Full https:// URL of the page where the loopa starts. Infer it when the user names a site " +
               "casually ('go on google' → https://www.google.com); only ask if the domain is genuinely ambiguous.",
           ),
       },
     },
     async ({ goal, startUrl }) => {
-      log.info("mcp", `create_demo_video user=${userId ?? "anon"} client=${clientId ?? "-"} startUrl=${startUrl} goal="${clip(goal)}"`);
+      log.info("mcp", `create_loopa user=${userId ?? "anon"} client=${clientId ?? "-"} startUrl=${startUrl} goal="${clip(goal)}"`);
       let run;
       try {
-        run = await startDemoRun(goal, startUrl, userId, clientId);
+        run = await startLoopaRun(goal, startUrl, userId, clientId);
       } catch (err) {
-        log.warn("mcp", `create_demo_video rejected: ${err instanceof Error ? err.message : err}`);
+        log.warn("mcp", `create_loopa rejected: ${err instanceof Error ? err.message : err}`);
         throw err;
       }
       const snap = await runSnapshot(run, baseUrl);
       return asText({
         ...snap,
         note: snap.shareable
-          ? "Video generation started. Poll get_demo_video every ~30s until status is 'done'; once recording starts, watchUrl is the video's watch page — share that link."
-          : "Video generation started. Do NOT share this watchUrl — it is local-only. Poll get_demo_video every ~30s; when status is 'done' it returns a shareable link if storage is configured.",
+          ? "Loopa generation started. Poll get_loopa every ~30s until status is 'done'; once recording starts, watchUrl is the video's watch page — share that link."
+          : "Loopa generation started. Do NOT share this watchUrl — it is local-only. Poll get_loopa every ~30s; when status is 'done' it returns a shareable link if storage is configured.",
       });
     },
   );
 
   server.registerTool(
-    "get_demo_video",
+    "get_loopa",
     {
-      title: "Get demo video status",
+      title: "Get loopa status",
       description:
-        "Check the status of a demo video run created with create_demo_video. Status is one of: planning, " +
+        "Check the status of a loopa run created with create_loopa. Status is one of: planning, " +
         "recording, composing, done, error. When 'done', the watchUrl is the video's watch page.",
       inputSchema: {
-        runId: z.string().describe("The runId returned by create_demo_video."),
+        runId: z.string().describe("The runId returned by create_loopa."),
       },
     },
     async ({ runId }) => {
       // DB fallback so polls keep working across a backend restart mid-run.
-      const run = await loadDemoRun(runId);
-      log.info("mcp", `get_demo_video ${runId} → ${run ? run.status : "not found"}`);
+      const run = await loadLoopaRun(runId);
+      log.info("mcp", `get_loopa ${runId} → ${run ? run.status : "not found"}`);
       if (!run) return { ...asText({ error: `no run with id ${runId}` }), isError: true };
       return asText(await runSnapshot(run, baseUrl));
     },

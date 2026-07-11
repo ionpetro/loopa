@@ -8,7 +8,7 @@ import { CheckIcon, ClapperboardIcon, DownloadIcon, LinkIcon } from "lucide-reac
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StudioHeader } from "@/components/studio-header";
-import { DemoPlayer, type VideoChapter } from "@/components/demo-player";
+import { LoopaPlayer, type VideoChapter } from "@/components/demo-player";
 import { apiUrl } from "@/lib/api-base";
 import { timeAgo } from "@/lib/timeago";
 
@@ -55,7 +55,7 @@ export default function WatchPage() {
             <ClapperboardIcon className="size-7 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">This video doesn&apos;t exist (or hasn&apos;t finished composing).</p>
             <Button asChild size="sm" variant="outline">
-              <Link href="/">back to the studio</Link>
+              <Link href="/">back to Loopa</Link>
             </Button>
           </div>
         )}
@@ -84,7 +84,7 @@ export default function WatchPage() {
 
         {data && (
           <div className="flex flex-col gap-5">
-            <DemoPlayer
+            <LoopaPlayer
               className="shadow-[0_0_80px_-20px_oklch(0_0_0/60%)]"
               src={data.videoUrl}
               poster={data.thumbUrl ?? undefined}
@@ -105,7 +105,7 @@ export default function WatchPage() {
                     </span>
                   )}
                   <div className="flex flex-col">
-                    <span className="text-sm">{data.author?.name ?? "Demo Studio"}</span>
+                    <span className="text-sm">{data.author?.name ?? "Loopa"}</span>
                     <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
                       {timeAgo(data.createdAt)}
                       {data.durationSec ? ` · ${data.durationSec.toFixed(0)}s` : ""}

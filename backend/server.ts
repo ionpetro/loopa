@@ -11,7 +11,7 @@ import { disposeAllSessions, getOrCreateSession, getSession } from "../src/engin
 import { failStaleWork, flushDb } from "../src/engine/db.ts";
 import type { SessionEvent } from "../src/engine/types.ts";
 import { jobDir, sweepOldJobDirs } from "../src/engine/jobs.ts";
-import { failAllActiveRuns, loadDemoRun } from "../src/engine/headless-run.ts";
+import { failAllActiveRuns, loadLoopaRun } from "../src/engine/headless-run.ts";
 import { listUserJobs, loadJobRecord } from "../src/engine/db.ts";
 import { getAuthor } from "../src/engine/author.ts";
 import { log } from "../src/engine/log.ts";
@@ -33,7 +33,8 @@ loadDotEnv();
 
 const DEFAULT_ORIGINS = [
   "http://localhost:3000",
-  "https://demo-studio-three.vercel.app",
+  "https://loopa.sh",
+  "https://local.loopa.sh",
 ];
 
 function allowedOrigins(): string[] {
@@ -226,7 +227,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   // --- Run status + stable watch URL for MCP-created runs ------------------
   const runMatch = pathname.match(/^\/api\/runs\/(run-[a-z0-9-]+)(\/video)?$/);
   if (req.method === "GET" && runMatch) {
-    const run = await loadDemoRun(runMatch[1]);
+    const run = await loadLoopaRun(runMatch[1]);
     if (!run) {
       json(res, 404, { error: "run not found" }, origin);
       return;
@@ -447,13 +448,13 @@ server.on("error", (err: NodeJS.ErrnoException) => {
 });
 
 server.listen(boundPort, () => {
-  log.info("http", `demo-studio backend listening on :${boundPort}`);
+  log.info("http", `loopa backend listening on :${boundPort}`);
   // Reclaim disk from old job dirs left by prior processes on this box.
   sweepOldJobDirs();
   // Boot reconciliation: a hard crash (OOM/SIGKILL) skips graceful shutdown,
   // leaving DB rows stuck in "recording"/"composing" while pollers see 202
   // forever. Nothing from a previous process can still be running.
-  void failStaleWork("backend restarted while this was in progress — submit the demo again").then((res) => {
+  void failStaleWork("backend restarted while this was in progress — submit the loopa again").then((res) => {
     if (res && (res.jobs || res.runs)) {
       log.info("boot", `failed ${res.jobs} stale job(s) and ${res.runs} stale run(s) from a previous process`);
     }
@@ -469,9 +470,9 @@ async function shutdown(signal: string) {
   log.info("shutdown", `${signal} — failing open jobs and closing browsers before exit`);
   const deadline = setTimeout(() => process.exit(1), 20_000);
   try {
-    await disposeAllSessions("backend restarted mid-recording (deploy) — please run the demo again");
+    await disposeAllSessions("backend restarted mid-recording (deploy) — please run the loopa again");
     // Synchronous: enqueues its persists before flushDb snapshots the chain.
-    failAllActiveRuns("backend restarted mid-run (deploy) — submit the demo again");
+    failAllActiveRuns("backend restarted mid-run (deploy) — submit the loopa again");
     await flushDb();
   } finally {
     clearTimeout(deadline);

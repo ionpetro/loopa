@@ -1,9 +1,9 @@
 /**
- * Headless demo runs — the programmatic entry point used by the MCP server.
+ * Headless loopa runs — the programmatic entry point used by the MCP server.
  *
  * A "run" wraps an AgentSession driven by a single autonomous prompt (no human
  * confirmation turn) and tracks its lifecycle so external agents can submit a
- * demo and poll until the video is ready.
+ * loopa and poll until the video is ready.
  */
 import { randomUUID } from "node:crypto";
 import { getOrCreateSession } from "./agent-session.ts";
@@ -14,7 +14,7 @@ import type { ActionLog, SessionEvent } from "./types.ts";
 
 export type RunStatus = "planning" | "recording" | "composing" | "done" | "error";
 
-export interface DemoRun {
+export interface LoopaRun {
   id: string;
   goal: string;
   startUrl: string;
@@ -32,14 +32,14 @@ export interface DemoRun {
 }
 
 // Pinned to globalThis so Next.js dev-mode HMR doesn't wipe live runs.
-const runs: Map<string, DemoRun> = ((globalThis as any).__demoRuns ??= new Map());
+const runs: Map<string, LoopaRun> = ((globalThis as any).__loopaRuns ??= new Map());
 
-// Per-run secret backing the internal agent-session id. Kept out of DemoRun so
+// Per-run secret backing the internal agent-session id. Kept out of LoopaRun so
 // it never leaks through the run's JSON (watch pages, /api/runs, DB) — the
 // runId itself is public via the watchUrl, so the session id must not be
 // derivable from it. A holder of a watch link must not be able to POST into
 // the run's live agent session.
-const runSessionKeys: Map<string, string> = ((globalThis as any).__demoRunSessionKeys ??= new Map());
+const runSessionKeys: Map<string, string> = ((globalThis as any).__loopaRunSessionKeys ??= new Map());
 
 const autonomousPrompt = (goal: string, startUrl: string) => `Autonomous run — there is no human in this chat. Never ask questions or wait for confirmation; the plan below is pre-approved.
 
@@ -47,14 +47,14 @@ Goal: ${goal}
 Start URL: ${startUrl}
 
 Do all of this in this single turn:
-1. Call set_demo_params with the goal and start URL exactly as given.
-2. Immediately call start_demo — do not ask for confirmation.
-3. Record the demo with browser_action calls: shortest clean path, short viewer-facing captions.
-4. When the goal is visibly achieved, call finish_demo with a short title.
+1. Call set_loop_params with the goal and start URL exactly as given.
+2. Immediately call start_loop — do not ask for confirmation.
+3. Record the loopa with browser_action calls: shortest clean path, short viewer-facing captions.
+4. When the goal is visibly achieved, call finish_loop with a short title.
 
-If an action fails, recover once and keep going; if the demo cannot be completed, call finish_demo anyway so a partial video is produced.
+If an action fails, recover once and keep going; if the loopa cannot be completed, call finish_loop anyway so a partial video is produced.
 
-There is no human to log in: never call request_login. If the user has previously logged in to this site through Demo Studio, the browser opens already signed in. If a login wall still blocks the goal, call abort_demo with reason "login required — open ${startUrl} in the Demo Studio app once to save your sign-in" instead of producing a video of a login page.`;
+There is no human to log in: never call request_login. If the user has previously logged in to this site through Loopa, the browser opens already signed in. If a login wall still blocks the goal, call abort_loop with reason "login required — open ${startUrl} in the Loopa app once to save your sign-in" instead of producing a video of a login page.`;
 
 /**
  * One headless run at a time. Three concurrent runs on the shared-cpu-1x box
@@ -80,7 +80,7 @@ function releaseRunSlot(): void {
   else activeRuns--;
 }
 
-export async function startDemoRun(goal: string, startUrl: string, userId?: string, clientId?: string): Promise<DemoRun> {
+export async function startLoopaRun(goal: string, startUrl: string, userId?: string, clientId?: string): Promise<LoopaRun> {
   await assertRunQuota(userId);
   const url = new URL(startUrl); // throws on invalid URL
   if (url.protocol !== "https:" && url.protocol !== "http:") {
@@ -96,7 +96,7 @@ export async function startDemoRun(goal: string, startUrl: string, userId?: stri
   // Unguessable id: the public watchUrl and status endpoints are keyed only on
   // this, so an enumerable id would let anyone read/poll other people's runs.
   const id = `run-${randomUUID()}`;
-  const run: DemoRun = { id, goal, startUrl, userId, clientId, status: "planning", actions: [], createdAt: Date.now() };
+  const run: LoopaRun = { id, goal, startUrl, userId, clientId, status: "planning", actions: [], createdAt: Date.now() };
   runs.set(id, run);
   persistRun(run);
   log.info(`run ${id}`, `created by ${userId ?? "anon"} — start ${startUrl}, goal "${clip(goal)}"`);
@@ -117,7 +117,7 @@ export async function startDemoRun(goal: string, startUrl: string, userId?: stri
   return run;
 }
 
-async function executeRun(run: DemoRun) {
+async function executeRun(run: LoopaRun) {
   // The Cursor API occasionally kills a run instantly ("Agent ... not found",
   // sub-second failures observed in prod). Those die before any browser work,
   // so retrying once on a fresh session is cheap and safe. Never retry once
@@ -146,7 +146,7 @@ async function executeRun(run: DemoRun) {
   persistRun(run);
 }
 
-function runAttempt(run: DemoRun, attempt: number): Promise<void> {
+function runAttempt(run: LoopaRun, attempt: number): Promise<void> {
   // Fresh session per attempt. The id is derived from a per-run random secret,
   // not the (public) runId, so a watch-link holder can't compute it and POST
   // into the live agent session. The sess- prefix keeps it valid for the API.
@@ -176,7 +176,7 @@ function runAttempt(run: DemoRun, attempt: number): Promise<void> {
       run.error = `run stalled — no agent activity for ${Math.round(STALL_MS / 60_000)} minutes`;
       log.error(`run ${run.id}`, `watchdog: ${run.error} — tearing the session down`);
       persistRun(run);
-      // abort (not dispose): fails the open job so demo_jobs doesn't keep a
+      // abort (not dispose): fails the open job so loopa_jobs doesn't keep a
       // zombie "recording" row — dispose alone also disarms handleMessage's
       // fallback failJob guard by nulling the browser first.
       void session.abort(run.error).catch(() => {});
@@ -223,7 +223,7 @@ function runAttempt(run: DemoRun, attempt: number): Promise<void> {
     });
 }
 
-export function getDemoRun(id: string): DemoRun | undefined {
+export function getLoopaRun(id: string): LoopaRun | undefined {
   return runs.get(id);
 }
 
@@ -251,8 +251,8 @@ export function failAllActiveRuns(reason: string): void {
   }
 }
 
-/** Like getDemoRun, but falls back to the DB for runs from a previous process. */
-export async function loadDemoRun(id: string): Promise<DemoRun | undefined> {
+/** Like getLoopaRun, but falls back to the DB for runs from a previous process. */
+export async function loadLoopaRun(id: string): Promise<LoopaRun | undefined> {
   const live = runs.get(id);
   if (live) return live;
   const rec = await loadRunRecord(id);

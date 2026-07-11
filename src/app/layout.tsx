@@ -13,8 +13,8 @@ const poppins = Poppins({
 });
 
 export const metadata: Metadata = {
-  title: "Demo Studio",
-  description: "Chat with an agent that records browser demo videos for you",
+  title: "Loopa",
+  description: "Cloud agent recorder",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

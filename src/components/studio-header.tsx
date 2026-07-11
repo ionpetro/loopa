@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { LoopaLogo } from "@/components/loopa-logo";
 import { ThemeSelector } from "@/components/ui/theme-toggle";
 
-/** The studio navbar: logo and auth. `children` renders extra controls
+/** The Loopa navbar: logo and auth. `children` renders extra controls
  * (e.g. the home page's stage-expand button) left of the auth area. */
 export function StudioHeader({ children }: { children?: React.ReactNode }) {
   return (

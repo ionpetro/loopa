@@ -14,7 +14,7 @@ import { uploadThumbnail, uploadVideo } from "./storage.ts";
 import { assertRunQuota } from "./quota.ts";
 import { apiUrl } from "../lib/api-base.ts";
 import type {
-  BrowserAction, ChatPart, DemoJob, DemoParams, Observation, Recipe, RecipeStep, SessionEvent, TimedCaption,
+  BrowserAction, ChatPart, LoopaJob, LoopaParams, Observation, Recipe, RecipeStep, SessionEvent, TimedCaption,
 } from "./types.ts";
 
 const MAX_ACTIONS = 24;
@@ -22,7 +22,7 @@ const OUTPUT = { fps: 30, width: 1280, height: 720, quality: 60 };
 /** How long a login handoff waits for the user before giving up. */
 const LOGIN_TIMEOUT_MS = 10 * 60_000;
 
-const SYSTEM = `You are a video walkthrough producer. You plan browser demo videos with the user, then record them by driving a real cloud browser yourself.
+const SYSTEM = `You are a video walkthrough producer for Loopa, a cloud agent recorder. You plan browser loopas with the user, then record them by driving a real cloud browser yourself.
 
 ## Phase 1 — plan (chat)
 Collect two things:
@@ -32,18 +32,18 @@ Collect two things:
 Rules:
 - Infer the start URL from a casual site name ("go on google" → https://www.google.com) instead of asking for the full https:// URL. If the domain is ambiguous, suggest one and proceed once the user agrees.
 - Ask one or two short questions at a time. Don't repeat answered questions.
-- When you have BOTH, call set_demo_params, then summarize the plan and ask the user to confirm.
-- If the demo needs the user's account (they say the page is behind a login, or the goal clearly requires being signed in), call request_login after set_demo_params and BEFORE start_demo. It opens a private, un-recorded browser where the user logs in themselves; their session is saved for this and future demos on that site.
+- When you have BOTH, call set_loop_params, then summarize the plan and ask the user to confirm.
+- If the loopa needs the user's account (they say the page is behind a login, or the goal clearly requires being signed in), call request_login after set_loop_params and BEFORE start_loop. It opens a private, un-recorded browser where the user logs in themselves; their session is saved for this and future loopas on that site.
 - NEVER ask for, accept, or type credentials (usernames, passwords, 2FA codes). If the user pastes credentials into chat, do not use or repeat them — point them to the secure login window instead.
 
 ## Phase 2 — record (after the user confirms)
-Call start_demo. It opens a recorded cloud browser at the start URL and returns the page observation (URL, ELEMENTS list with indexes, screenshot). The user is watching live, and EVERYTHING you do is being recorded into the final video — move deliberately, shortest clean path, no backtracking.
+Call start_loop. It opens a recorded cloud browser at the start URL and returns the page observation (URL, ELEMENTS list with indexes, screenshot). The user is watching live, and EVERYTHING you do is being recorded into the final video — move deliberately, shortest clean path, no backtracking.
 
 Then repeat: call browser_action with exactly ONE action (click/type/hover/scroll/goto/wait) toward the goal. For click/type/hover set target_index from the LATEST elements list. Always include a short viewer-facing "caption" — it's overlaid on the video while that action plays. Each call returns a fresh elements list; do not call observe_page unless the list seems stale or you need to see the page.
 
-When the goal is visibly achieved, call finish_demo with a short video title. It stops recording, produces the MP4, and returns the result. Tell the user it's ready and ask if they want another take or a different demo.
+When the goal is visibly achieved, call finish_loop with a short video title. It stops recording, produces the MP4, and returns the result. Tell the user it's ready and ask if they want another take or a different loopa.
 
-If a login wall unexpectedly blocks the demo mid-recording, do NOT type credentials — call abort_demo, then offer to set up the login (request_login) and re-record.
+If a login wall unexpectedly blocks the loopa mid-recording, do NOT type credentials — call abort_loop, then offer to set up the login (request_login) and re-record.
 
 If a recording fails, apologize briefly and ask whether to retry or adjust the plan.`;
 
@@ -74,7 +74,7 @@ function stepFromAction(a: BrowserAction, obs: Observation | null): RecipeStep {
   return step;
 }
 
-const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "demo";
+const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "loopa";
 
 export class AgentSession {
   readonly id: string;
@@ -88,8 +88,8 @@ export class AgentSession {
   private jobStartedAt = 0;
   private model = "composer-2.5";
 
-  private params: DemoParams | null = null;
-  private job: DemoJob | null = null;
+  private params: LoopaParams | null = null;
+  private job: LoopaJob | null = null;
   private browser: BrowserSession | null = null;
   /** Pending login handoff — resolves true when the user clicks Continue. */
   private loginResolve: ((confirmed: boolean) => void) | null = null;
@@ -120,7 +120,7 @@ export class AgentSession {
   /**
    * Surface a tool call to the client and the persisted transcript. The SDK
    * stream reports every custom tool as just "mcp", so each tool announces
-   * itself with a one-word studio label instead.
+   * itself with a one-word Loopa label instead.
    */
   private noteToolCall(label: string) {
     log.info(this.tag, `tool: ${label}`);
@@ -238,7 +238,7 @@ export class AgentSession {
         // A run that died without streaming anything is the "sick process"
         // signature — see noteInstantAgentFailure.
         if (assistantParts.length === 0 && noteInstantAgentFailure()) {
-          this.emit({ type: "error", message: "The studio is restarting itself to recover — try again in ~30 seconds." });
+          this.emit({ type: "error", message: "Loopa is restarting itself to recover — try again in ~30 seconds." });
         }
       }
     } catch (err) {
@@ -246,9 +246,9 @@ export class AgentSession {
       this.emit({ type: "error", message: err instanceof Error ? err.message : String(err) });
     } finally {
       this.busy = false;
-      // If a recording was left open (agent errored mid-demo), tear it down.
+      // If a recording was left open (agent errored mid-loopa), tear it down.
       if (this.browser && this.job?.status === "recording") {
-        await this.failJob("agent turn ended without finishing the demo");
+        await this.failJob("agent turn ended without finishing the loopa");
       }
       this.turnParts = null;
       if (assistantParts.length > 0) persistMessage(this.id, "assistant", assistantParts);
@@ -257,7 +257,7 @@ export class AgentSession {
     }
   }
 
-  // --- demo lifecycle (invoked by agent tools) ------------------------------
+  // --- loopa lifecycle (invoked by agent tools) ------------------------------
 
   private async failJob(reason: string) {
     if (this.job) {
@@ -292,8 +292,8 @@ export class AgentSession {
 
   private buildTools() {
     return {
-      set_demo_params: {
-        description: "Save the confirmed demo goal and start URL. Call once when both are known, before asking the user to confirm.",
+      set_loop_params: {
+        description: "Save the confirmed loopa goal and start URL. Call once when both are known, before asking the user to confirm.",
         inputSchema: {
           type: "object",
           properties: { goal: { type: "string" }, startUrl: { type: "string" } },
@@ -303,21 +303,21 @@ export class AgentSession {
           this.noteToolCall("plan");
           this.params = { goal: String(args.goal), startUrl: String(args.startUrl) };
           this.emit({ type: "plan", goal: this.params.goal, startUrl: this.params.startUrl });
-          return text(JSON.stringify({ saved: true, ...this.params, next: "Ask the user to confirm, then call start_demo." }));
+          return text(JSON.stringify({ saved: true, ...this.params, next: "Ask the user to confirm, then call start_loop." }));
         },
       },
 
       request_login: {
         description:
-          "Open the demo site in a private, UN-recorded cloud browser and hand control to the user so they log in themselves. Blocks until they confirm (or 10 minutes pass); their session is saved for this and future demos on the site. Call after set_demo_params and before start_demo when the demo needs their account. Never ask the user for credentials.",
+          "Open the site in a private, UN-recorded cloud browser and hand control to the user so they log in themselves. Blocks until they confirm (or 10 minutes pass); their session is saved for this and future loopas on the site. Call after set_loop_params and before start_loop when the loopa needs their account. Never ask the user for credentials.",
         inputSchema: {
           type: "object",
           properties: { login_url: { type: "string", description: "Page to open for the login; defaults to the start URL." } },
         },
         execute: async (args: any): Promise<ToolResult> => {
           this.noteToolCall("login");
-          if (!this.params) return { ...text("No demo params saved — call set_demo_params first."), isError: true };
-          if (this.job) return { ...text("A demo is already recording — logins must happen before start_demo."), isError: true };
+          if (!this.params) return { ...text("No loopa params saved — call set_loop_params first."), isError: true };
+          if (this.job) return { ...text("A loopa is already recording — logins must happen before start_loop."), isError: true };
           if (this.loginResolve) return { ...text("A login handoff is already open."), isError: true };
           const host = new URL(this.params.startUrl).host;
           let profileSaved = false;
@@ -328,7 +328,7 @@ export class AgentSession {
               // on close. Best-effort — profiles are a paid Kernel feature
               // (403 insufficient_plan on the free tier), and the handoff still
               // works without one: the login lives as long as this browser,
-              // which start_demo reuses for the recording.
+              // which start_loop reuses for the recording.
               let profile: { name: string; saveChanges: boolean } | undefined;
               if (this.userId) {
                 try {
@@ -343,7 +343,7 @@ export class AgentSession {
                   );
                 }
               }
-              // Real frames dir arrives at start_demo (no job exists yet).
+              // Real frames dir arrives at start_loop (no job exists yet).
               this.browser = await BrowserSession.create(
                 path.join(DATA_DIR, "handoff", this.id, "frames"),
                 undefined,
@@ -381,7 +381,7 @@ export class AgentSession {
               content: [
                 {
                   type: "text",
-                  text: `The user finished logging in — the browser stays signed in for the recording${profileSaved ? `, and the session is saved for future demos on ${host}` : ` (this recording only — saved logins are not available on this plan)`}. Nothing was recorded. Current page:\n\n${observationText(this.lastObs)}\n\nConfirm the plan with the user, then call start_demo.`,
+                  text: `The user finished logging in — the browser stays signed in for the recording${profileSaved ? `, and the session is saved for future loopas on ${host}` : ` (this recording only — saved logins are not available on this plan)`}. Nothing was recorded. Current page:\n\n${observationText(this.lastObs)}\n\nConfirm the plan with the user, then call start_loop.`,
                 },
                 { type: "image", data: this.lastObs.shot!, mimeType: "image/jpeg" },
               ],
@@ -397,18 +397,18 @@ export class AgentSession {
         },
       },
 
-      start_demo: {
-        description: "Open a recorded cloud browser at the start URL and begin the demo. Returns the initial page observation. Only call after the user confirmed the plan.",
+      start_loop: {
+        description: "Open a recorded cloud browser at the start URL and begin the loopa. Returns the initial page observation. Only call after the user confirmed the plan.",
         inputSchema: { type: "object", properties: {} },
         execute: async (): Promise<ToolResult> => {
           this.noteToolCall("roll");
-          if (!this.params) return { ...text("No demo params saved — call set_demo_params first."), isError: true };
-          if (this.browser && this.job) return { ...text("A demo is already in progress."), isError: true };
+          if (!this.params) return { ...text("No loopa params saved — call set_loop_params first."), isError: true };
+          if (this.browser && this.job) return { ...text("A loopa is already in progress."), isError: true };
           try {
             await assertRunQuota(this.userId);
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            return { ...text(`start_demo blocked: ${msg} Tell the user, do not retry.`), isError: true };
+            return { ...text(`start_loop blocked: ${msg} Tell the user, do not retry.`), isError: true };
           }
           try {
             this.job = createJob(this.params.goal, this.params.startUrl, {
@@ -457,7 +457,7 @@ export class AgentSession {
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             await this.failJob(msg);
-            return { ...text(`start_demo failed: ${msg}`), isError: true };
+            return { ...text(`start_loop failed: ${msg}`), isError: true };
           }
         },
       },
@@ -479,9 +479,9 @@ export class AgentSession {
         },
         execute: async (args: any): Promise<ToolResult> => {
           this.noteToolCall("action");
-          if (!this.browser || !this.job) return { ...text("No demo in progress — call start_demo first."), isError: true };
+          if (!this.browser || !this.job) return { ...text("No loopa in progress — call start_loop first."), isError: true };
           if (this.actionCount >= MAX_ACTIONS) {
-            return { ...text(`Max ${MAX_ACTIONS} actions reached — call finish_demo now.`), isError: true };
+            return { ...text(`Max ${MAX_ACTIONS} actions reached — call finish_loop now.`), isError: true };
           }
           this.actionCount++;
 
@@ -527,7 +527,7 @@ export class AgentSession {
         inputSchema: { type: "object", properties: {} },
         execute: async (): Promise<ToolResult> => {
           this.noteToolCall("observe");
-          if (!this.browser) return { ...text("No demo in progress."), isError: true };
+          if (!this.browser) return { ...text("No loopa in progress."), isError: true };
           this.lastObs = await this.browser.observe();
           return {
             content: [
@@ -538,7 +538,7 @@ export class AgentSession {
         },
       },
 
-      finish_demo: {
+      finish_loop: {
         description: "Stop recording and produce the final MP4. Call when the goal is visibly achieved.",
         inputSchema: {
           type: "object",
@@ -548,7 +548,7 @@ export class AgentSession {
         execute: async (args: any): Promise<ToolResult> => {
           this.noteToolCall("wrap");
           if (!this.browser || !this.job || !this.params) {
-            return { ...text("No demo in progress."), isError: true };
+            return { ...text("No loopa in progress."), isError: true };
           }
           const job = this.job;
           const browser = this.browser;
@@ -594,7 +594,7 @@ export class AgentSession {
             const recipe: Recipe = {
               name: `auto-${slug(this.params.goal)}`,
               title,
-              subtitle: "DEMO STUDIO · Walkthrough",
+              subtitle: "LOOPA · Walkthrough",
               brand: host.replace(/^www\./, "").toUpperCase(),
               outro: host,
               goal: this.params.goal,
@@ -651,12 +651,12 @@ export class AgentSession {
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             await this.failJob(msg);
-            return { ...text(`finish_demo failed: ${msg}`), isError: true };
+            return { ...text(`finish_loop failed: ${msg}`), isError: true };
           }
         },
       },
 
-      abort_demo: {
+      abort_loop: {
         description:
           "Abort the current recording WITHOUT producing a video — e.g. a login wall or broken page blocks the goal. Explain what happened to the user afterwards.",
         inputSchema: {
@@ -666,7 +666,7 @@ export class AgentSession {
         },
         execute: async (args: any): Promise<ToolResult> => {
           this.noteToolCall("cut");
-          if (!this.job) return { ...text("No demo in progress."), isError: true };
+          if (!this.job) return { ...text("No loopa in progress."), isError: true };
           await this.failJob(String(args.reason ?? "").trim() || "aborted by the agent");
           return text(JSON.stringify({
             aborted: true,
@@ -697,7 +697,7 @@ export class AgentSession {
 }
 
 // Session registry, HMR-safe.
-const sessions: Map<string, AgentSession> = ((globalThis as any).__demoSessions ??= new Map());
+const sessions: Map<string, AgentSession> = ((globalThis as any).__loopaSessions ??= new Map());
 
 /**
  * Self-heal for a failure mode observed twice in prod: after hours of uptime,

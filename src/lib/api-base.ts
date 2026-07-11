@@ -1,4 +1,4 @@
-/** Base URL for the demo-studio API (empty = same origin). */
+/** Base URL for the Loopa API (empty = same origin). */
 export function apiBase(): string {
   const raw =
     (typeof process !== "undefined" && process.env.NEXT_PUBLIC_API_URL) ||

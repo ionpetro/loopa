@@ -1,10 +1,11 @@
 {
-  "name": "demo-studio",
+  "name": "loopa",
   "version": "0.1.0",
   "private": true,
-  "description": "Chat with an agent that records browser demo videos for you — Cursor SDK + Kernel + ffmpeg",
+  "description": "Cloud agent recorder — Cursor SDK + Kernel + ffmpeg",
   "scripts": {
     "dev": "next dev",
+    "dev:local": "next dev --experimental-https -H local.loopa.sh -p 443",
     "build": "next build",
     "start": "next start",
     "smoke": "node --experimental-strip-types scripts/smoke.ts",

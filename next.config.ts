@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Production Clerk keys only accept loopa.sh origins — map local.loopa.sh in
+  // /etc/hosts and run `npm run dev:local` (HTTPS on :443).
+  allowedDevOrigins: ["local.loopa.sh"],
   // Server-only packages that must not be bundled by webpack/turbopack:
   // they spawn processes (@cursor/sdk) or open raw sockets (playwright-core).
   serverExternalPackages: ["@cursor/sdk", "@onkernel/sdk", "playwright-core"],

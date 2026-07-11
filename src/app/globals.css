@@ -5,13 +5,13 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Demo Studio — broadcast control-room theme. Light palette on :root, dark
+ * Loopa — broadcast control-room theme. Light palette on :root, dark
  * under .dark; next-themes stamps the class on <html> (system by default).
  * The shadcn token mapping below is defined once — var() resolves per
- * element, so it picks up whichever studio palette is in scope.
+ * element, so it picks up whichever Loopa palette is in scope.
  */
 :root {
-  /* studio palette — light: warm paper, ink text, same signal colors */
+  /* Loopa palette — light: warm paper, ink text, same signal colors */
   --bg: oklch(0.975 0.004 95);
   --bg-raise: oklch(1 0 0);
   --bg-panel: oklch(0.945 0.006 95);
@@ -25,7 +25,7 @@
 }
 
 .dark {
-  /* studio palette — dark control room (the original look) */
+  /* Loopa palette — dark control room (the original look) */
   --bg: oklch(0.145 0.012 285);
   --bg-raise: oklch(0.185 0.014 285);
   --bg-panel: oklch(0.215 0.016 285);
@@ -39,7 +39,7 @@
 }
 
 :root {
-  /* shadcn tokens mapped onto the studio palette */
+  /* shadcn tokens mapped onto the Loopa palette */
   --background: var(--bg);
   --foreground: var(--ink);
   --card: var(--bg-raise);
@@ -104,7 +104,7 @@
   body {
     @apply bg-background text-foreground;
     /* No global overflow:hidden — it made /videos and watch pages
-       unscrollable. The studio home pins its own viewport instead. */
+       unscrollable. The Loopa home pins its own viewport instead. */
   }
 }
 

@@ -22,7 +22,7 @@ function fmt(sec: number): string {
  * caption, Cursor-style). Degrades to a single unlabeled segment for older
  * videos without chapter data.
  */
-export function DemoPlayer({
+export function LoopaPlayer({
   src,
   poster,
   chapters,

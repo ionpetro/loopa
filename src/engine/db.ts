@@ -9,7 +9,7 @@
  */
 import pg from "pg";
 import { log } from "./log.ts";
-import type { ChatPart, DemoJob } from "./types.ts";
+import type { ChatPart, LoopaJob } from "./types.ts";
 
 export interface RunRecord {
   id: string;
@@ -50,19 +50,33 @@ function ensureSchema(): Promise<void> {
   // permanently disable every subsequent write until a restart.
   schemaReady ??= (async () => {
     await getPool().query(`
-      create table if not exists demo_sessions (
+      do $$ begin
+        if to_regclass('public.demo_sessions') is not null and to_regclass('public.loopa_sessions') is null then
+          alter table demo_sessions rename to loopa_sessions;
+        end if;
+        if to_regclass('public.demo_messages') is not null and to_regclass('public.loopa_messages') is null then
+          alter table demo_messages rename to loopa_messages;
+        end if;
+        if to_regclass('public.demo_jobs') is not null and to_regclass('public.loopa_jobs') is null then
+          alter table demo_jobs rename to loopa_jobs;
+        end if;
+        if to_regclass('public.demo_runs') is not null and to_regclass('public.loopa_runs') is null then
+          alter table demo_runs rename to loopa_runs;
+        end if;
+      end $$;
+      create table if not exists loopa_sessions (
         id text primary key,
         user_id text,
         created_at timestamptz not null default now()
       );
-      create table if not exists demo_messages (
+      create table if not exists loopa_messages (
         id bigint generated always as identity primary key,
-        session_id text not null references demo_sessions(id) on delete cascade,
+        session_id text not null references loopa_sessions(id) on delete cascade,
         role text not null,
         parts jsonb not null default '[]',
         created_at timestamptz not null default now()
       );
-      create table if not exists demo_jobs (
+      create table if not exists loopa_jobs (
         id text primary key,
         user_id text,
         session_id text,
@@ -76,7 +90,7 @@ function ensureSchema(): Promise<void> {
         created_at timestamptz not null,
         updated_at timestamptz not null default now()
       );
-      create table if not exists demo_runs (
+      create table if not exists loopa_runs (
         id text primary key,
         user_id text,
         goal text not null,
@@ -90,22 +104,22 @@ function ensureSchema(): Promise<void> {
         created_at timestamptz not null,
         updated_at timestamptz not null default now()
       );
-      alter table demo_jobs add column if not exists title text;
-      alter table demo_jobs add column if not exists thumb_url text;
-      alter table demo_jobs add column if not exists recipe jsonb;
-      alter table demo_jobs add column if not exists usage jsonb;
-      alter table demo_jobs add column if not exists chapters jsonb;
-      alter table demo_runs add column if not exists client_id text;
-      create index if not exists demo_messages_session_idx on demo_messages (session_id, id);
-      create index if not exists demo_sessions_user_idx on demo_sessions (user_id, created_at desc);
-      create index if not exists demo_jobs_user_idx on demo_jobs (user_id, created_at desc);
+      alter table loopa_jobs add column if not exists title text;
+      alter table loopa_jobs add column if not exists thumb_url text;
+      alter table loopa_jobs add column if not exists recipe jsonb;
+      alter table loopa_jobs add column if not exists usage jsonb;
+      alter table loopa_jobs add column if not exists chapters jsonb;
+      alter table loopa_runs add column if not exists client_id text;
+      create index if not exists loopa_messages_session_idx on loopa_messages (session_id, id);
+      create index if not exists loopa_sessions_user_idx on loopa_sessions (user_id, created_at desc);
+      create index if not exists loopa_jobs_user_idx on loopa_jobs (user_id, created_at desc);
       -- Tables live in the public schema, which Supabase exposes over PostgREST;
       -- RLS with no policies hides them from anon/authenticated API keys. Our
       -- direct connection is the table owner and bypasses RLS.
-      alter table demo_sessions enable row level security;
-      alter table demo_messages enable row level security;
-      alter table demo_jobs enable row level security;
-      alter table demo_runs enable row level security;
+      alter table loopa_sessions enable row level security;
+      alter table loopa_messages enable row level security;
+      alter table loopa_jobs enable row level security;
+      alter table loopa_runs enable row level security;
     `);
   })().catch((err) => {
     schemaReady = null; // allow the next write to retry the schema check
@@ -141,8 +155,8 @@ export function flushDb(): Promise<void> {
 export function persistSession(sessionId: string, userId: string | undefined): void {
   tryDb(`persistSession(${sessionId})`, () =>
     getPool().query(
-      `insert into demo_sessions (id, user_id) values ($1, $2)
-       on conflict (id) do update set user_id = coalesce(demo_sessions.user_id, excluded.user_id)`,
+      `insert into loopa_sessions (id, user_id) values ($1, $2)
+       on conflict (id) do update set user_id = coalesce(loopa_sessions.user_id, excluded.user_id)`,
       [sessionId, userId ?? null],
     ),
   );
@@ -150,7 +164,7 @@ export function persistSession(sessionId: string, userId: string | undefined): v
 
 export function persistMessage(sessionId: string, role: "user" | "assistant", parts: ChatPart[]): void {
   tryDb(`persistMessage(${sessionId})`, () =>
-    getPool().query(`insert into demo_messages (session_id, role, parts) values ($1, $2, $3::jsonb)`, [
+    getPool().query(`insert into loopa_messages (session_id, role, parts) values ($1, $2, $3::jsonb)`, [
       sessionId,
       role,
       JSON.stringify(parts),
@@ -159,16 +173,16 @@ export function persistMessage(sessionId: string, role: "user" | "assistant", pa
 }
 
 /** Fire-and-forget upsert of a job's current state. */
-export function persistJob(job: DemoJob): void {
+export function persistJob(job: LoopaJob): void {
   tryDb(`persistJob(${job.id})`, () =>
     getPool().query(
-      `insert into demo_jobs (id, user_id, session_id, goal, title, start_url, status, actions, video_url, thumb_url, recipe, usage, chapters, duration_sec, error, created_at, updated_at)
+      `insert into loopa_jobs (id, user_id, session_id, goal, title, start_url, status, actions, video_url, thumb_url, recipe, usage, chapters, duration_sec, error, created_at, updated_at)
        values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11::jsonb, $12::jsonb, $13::jsonb, $14, $15, to_timestamp($16 / 1000.0), now())
        on conflict (id) do update set
-         status = excluded.status, title = coalesce(excluded.title, demo_jobs.title), actions = excluded.actions,
-         video_url = excluded.video_url, thumb_url = coalesce(excluded.thumb_url, demo_jobs.thumb_url),
-         recipe = coalesce(excluded.recipe, demo_jobs.recipe), usage = coalesce(excluded.usage, demo_jobs.usage),
-         chapters = coalesce(excluded.chapters, demo_jobs.chapters),
+         status = excluded.status, title = coalesce(excluded.title, loopa_jobs.title), actions = excluded.actions,
+         video_url = excluded.video_url, thumb_url = coalesce(excluded.thumb_url, loopa_jobs.thumb_url),
+         recipe = coalesce(excluded.recipe, loopa_jobs.recipe), usage = coalesce(excluded.usage, loopa_jobs.usage),
+         chapters = coalesce(excluded.chapters, loopa_jobs.chapters),
          duration_sec = excluded.duration_sec, error = excluded.error, updated_at = now()`,
       [job.id, job.userId ?? null, job.sessionId ?? null, job.goal, job.title ?? null, job.startUrl, job.status,
        JSON.stringify(job.actions), job.videoUrl ?? null, job.thumbUrl ?? null,
@@ -214,7 +228,7 @@ export async function listUserJobs(userId: string): Promise<JobRecord[]> {
     await ensureSchema();
     const { rows } = await getPool().query(
       `select id, title, goal, status, user_id, video_url, thumb_url, duration_sec, created_at, chapters
-       from demo_jobs where user_id = $1 and status = 'done' and video_url is not null
+       from loopa_jobs where user_id = $1 and status = 'done' and video_url is not null
        order by created_at desc limit 100`,
       [userId],
     );
@@ -231,7 +245,7 @@ export async function loadJobRecord(id: string): Promise<JobRecord | undefined> 
   try {
     await ensureSchema();
     const { rows } = await getPool().query(
-      `select id, title, goal, status, user_id, video_url, thumb_url, duration_sec, created_at, chapters from demo_jobs where id = $1`,
+      `select id, title, goal, status, user_id, video_url, thumb_url, duration_sec, created_at, chapters from loopa_jobs where id = $1`,
       [id],
     );
     return rows[0] ? rowToJobRecord(rows[0]) : undefined;
@@ -245,7 +259,7 @@ export async function loadJobRecord(id: string): Promise<JobRecord | undefined> 
 export function persistRun(run: RunRecord): void {
   tryDb(`persistRun(${run.id})`, () =>
     getPool().query(
-      `insert into demo_runs (id, user_id, client_id, goal, start_url, status, job_id, live_view_url, duration_sec, error, actions, created_at, updated_at)
+      `insert into loopa_runs (id, user_id, client_id, goal, start_url, status, job_id, live_view_url, duration_sec, error, actions, created_at, updated_at)
        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, to_timestamp($12 / 1000.0), now())
        on conflict (id) do update set
          status = excluded.status, job_id = excluded.job_id, live_view_url = excluded.live_view_url,
@@ -268,8 +282,8 @@ export async function countUserWorkSince(userId: string, hours: number): Promise
     await ensureSchema();
     const { rows } = await getPool().query(
       `select greatest(
-         (select count(*) from demo_jobs where user_id = $1 and created_at > now() - make_interval(hours => $2)),
-         (select count(*) from demo_runs where user_id = $1 and created_at > now() - make_interval(hours => $2))
+         (select count(*) from loopa_jobs where user_id = $1 and created_at > now() - make_interval(hours => $2)),
+         (select count(*) from loopa_runs where user_id = $1 and created_at > now() - make_interval(hours => $2))
        )::int as n`,
       [userId, hours],
     );
@@ -291,12 +305,12 @@ export async function failStaleWork(reason: string): Promise<{ jobs: number; run
   try {
     await ensureSchema();
     const j = await getPool().query(
-      `update demo_jobs set status = 'error', error = coalesce(error, $1), updated_at = now()
+      `update loopa_jobs set status = 'error', error = coalesce(error, $1), updated_at = now()
        where status not in ('done', 'error')`,
       [reason],
     );
     const r = await getPool().query(
-      `update demo_runs set status = 'error', error = coalesce(error, $1), updated_at = now()
+      `update loopa_runs set status = 'error', error = coalesce(error, $1), updated_at = now()
        where status not in ('done', 'error')`,
       [reason],
     );
@@ -312,7 +326,7 @@ export async function loadRunRecord(id: string): Promise<RunRecord | undefined> 
   if (!dbEnabled()) return undefined;
   try {
     await ensureSchema();
-    const { rows } = await getPool().query(`select * from demo_runs where id = $1`, [id]);
+    const { rows } = await getPool().query(`select * from loopa_runs where id = $1`, [id]);
     if (!rows[0]) return undefined;
     const r = rows[0];
     return {

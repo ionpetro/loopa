@@ -127,8 +127,8 @@
       "skillPath": "skills/features/clerk-webhooks/SKILL.md",
       "computedHash": "de12deda380be19d32d62c4106a6b78736cd4d9cc6dd5b214f6039853ad89e54"
     },
-    "record-demo": {
-      "source": "ionpetro/demo-studio",
+    "record-loopa": {
+      "source": "ionpetro/loopa",
       "sourceType": "github",
       "skillPath": "skills/record-demo/SKILL.md",
       "computedHash": "7d9d6a8ff3bc7fbece6cfbf7f35bd336c420b632ca11d298617f0b4d699536c2"

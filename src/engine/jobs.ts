@@ -4,7 +4,7 @@ import path from "node:path";
 import { persistJob } from "./db.ts";
 import { log } from "./log.ts";
 import { writableDataDir } from "./paths.ts";
-import type { DemoJob } from "./types.ts";
+import type { LoopaJob } from "./types.ts";
 
 export const DATA_DIR = writableDataDir();
 
@@ -43,16 +43,16 @@ export function sweepOldJobDirs(maxAgeMs = 24 * 60 * 60 * 1000): void {
 }
 
 // Pinned to globalThis so Next.js dev-mode HMR doesn't wipe live jobs.
-const store: Map<string, DemoJob> = ((globalThis as any).__demoJobs ??= new Map());
+const store: Map<string, LoopaJob> = ((globalThis as any).__loopaJobs ??= new Map());
 
 export function createJob(
   goal: string,
   startUrl: string,
   owner: { userId?: string; sessionId?: string } = {},
-): DemoJob {
+): LoopaJob {
   // Unguessable id: watch/status URLs are the only access control on a job.
   const id = `job-${randomUUID()}`;
-  const job: DemoJob = {
+  const job: LoopaJob = {
     id, goal, startUrl, status: "recording",
     userId: owner.userId, sessionId: owner.sessionId,
     actions: [], createdAt: Date.now(),
@@ -62,7 +62,7 @@ export function createJob(
   return job;
 }
 
-export function getJob(id: string): DemoJob | undefined {
+export function getJob(id: string): LoopaJob | undefined {
   return store.get(id);
 }
 

@@ -1,4 +1,4 @@
-export interface DemoParams {
+export interface LoopaParams {
   goal: string;
   startUrl: string;
 }
@@ -90,7 +90,7 @@ export interface ActionLog {
   error?: string;
 }
 
-export interface DemoJob {
+export interface LoopaJob {
   id: string;
   goal: string;
   title?: string;

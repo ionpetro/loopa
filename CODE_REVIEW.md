@@ -18,10 +18,10 @@ ranked. Checkboxes track fixes; a few items were already fixed during the review
 - [ ] **C1. Open `/mcp` = anonymous credit burning.** `MCP_AUTH_TOKEN` unset in
       prod; no rate limit; no concurrency cap; no `goal` length cap
       (`backend/server.ts` `mcpAuthorized`, `backend/mcp.ts` inputSchema,
-      `src/engine/headless-run.ts` `startDemoRun`). A loop against the public
+      `src/engine/headless-run.ts` `startLoopaRun`). A loop against the public
       URL spawns N Kernel browsers + N Cursor runs.
       Fix bundle: `fly secrets set MCP_AUTH_TOKEN=…`; max ~2 concurrent runs in
-      `startDemoRun`; `goal: z.string().min(1).max(500)`.
+      `startLoopaRun`; `goal: z.string().min(1).max(500)`.
 - [ ] **C2. `readBody` buffers unbounded bodies** (`backend/server.ts`) —
       reachable unauthenticated on `/mcp`; OOMs the 1GB box. Cap ~1MB → 413.
 - [ ] **C3. One transient failure permanently disables persistence/uploads.**
@@ -48,7 +48,7 @@ ranked. Checkboxes track fixes; a few items were already fixed during the review
 
 - [ ] **H1. "Stable watchUrl" breaks after deploy even when the video survived.**
       `/api/runs/:id/video` redirects to `/api/jobs/:id/video` (local disk) and
-      never consults the persisted Supabase `videoUrl` in `demo_jobs`
+      never consults the persisted Supabase `videoUrl` in `loopa_jobs`
       (`backend/server.ts`; fix via `loadJobRecord`). The GitHub commit-comment
       link dies on next deploy despite the MP4 living in Supabase.
 - [ ] **H2. Public watch pages: black player for signed-out viewers** when
@@ -56,8 +56,8 @@ ranked. Checkboxes track fixes; a few items were already fixed during the review
       `src/middleware.ts`.
 - [ ] **H3. No Range-request support on video routes** (Next route + Fly
       server) — Safari/iOS refuse to play; seeking broken everywhere.
-- [ ] **H4. MCP `get_demo_video` uses in-memory `getDemoRun`** while REST uses
-      `loadDemoRun` — after a deploy, MCP pollers get "no run with id …" for
+- [ ] **H4. MCP `get_loopa` uses in-memory `getLoopaRun`** while REST uses
+      `loadLoopaRun` — after a deploy, MCP pollers get "no run with id …" for
       runs that exist in Postgres (`backend/mcp.ts`).
 - [ ] **H5. Copy-agent-instructions emits `http://localhost:3001/mcp`** when
       `NEXT_PUBLIC_API_URL` is unset in the Vercel env (`src/app/page.tsx`
@@ -113,7 +113,7 @@ ranked. Checkboxes track fixes; a few items were already fixed during the review
 - [ ] `.env.example` missing 7 vars the code reads: `CLERK_SECRET_KEY`,
       `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `DATABASE_URL`, `SUPABASE_URL`,
       `SUPABASE_SECRET_KEY`, `MCP_AUTH_TOKEN`, `ALLOW_VERCEL_ORIGINS`
-- [ ] `npx skills add ionpetro/demo-studio` offers 22 skills — 21 vendored
+- [ ] `npx skills add ionpetro/loopa` offers 22 skills — 21 vendored
       Clerk skills in `skills/` pollute the pick-list; move them out of the
       published namespace
 - [ ] Docker: full frontend dep tree installed into the backend image; use

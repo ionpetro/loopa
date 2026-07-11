@@ -1,4 +1,4 @@
-app = "demo-studio-backend"
+app = "loopa-backend"
 primary_region = "sjc"
 # Give the shutdown handler time to fail open jobs and close cloud browsers.
 kill_timeout = "30s"
@@ -8,9 +8,9 @@ kill_timeout = "30s"
 
 [env]
   PORT = "3001"
-  PUBLIC_URL = "https://demo-studio-backend.fly.dev"
+  PUBLIC_URL = "https://api.loopa.sh"
   # Web-app base for watch-page links (also joins the CORS allowlist).
-  FRONTEND_URL = "https://demo-studio-three.vercel.app"
+  FRONTEND_URL = "https://loopa.sh"
 
 [http_service]
   internal_port = 3001
