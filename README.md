@@ -1,4 +1,4 @@
-# Demo Studio
+# Loopa.sh
 
 Chat with an agent about the browser demo you want, watch it drive a live cloud
 browser, and download the finished MP4.
