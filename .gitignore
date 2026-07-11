@@ -11,3 +11,10 @@ next-env.d.ts
 data/
 .vercel
 .claude/worktrees/
+
+# local dev TLS certs (mkcert)
+certificates/
+
+# Locally installed third-party skills (npx skills add) — not part of loopa
+.agents/skills/clerk
+.agents/skills/clerk-*
