@@ -9,7 +9,7 @@
  */
 import pg from "pg";
 import { log } from "./log.ts";
-import type { ChatPart, LoopaJob } from "./types.ts";
+import type { ChatPart, LoopaJob, Recipe } from "./types.ts";
 
 export interface RunRecord {
   id: string;
@@ -213,6 +213,8 @@ export interface JobRecord {
   durationSec: number | null;
   createdAt: number;
   chapters: { title: string; start: number }[] | null;
+  /** Replayable step list — only selected for the single-job watch query. */
+  recipe?: Recipe | null;
 }
 
 function rowToJobRecord(r: any): JobRecord {
@@ -227,6 +229,7 @@ function rowToJobRecord(r: any): JobRecord {
     durationSec: r.duration_sec ?? null,
     createdAt: new Date(r.created_at).getTime(),
     chapters: r.chapters ?? null,
+    recipe: r.recipe ?? null,
   };
 }
 
@@ -254,7 +257,7 @@ export async function loadJobRecord(id: string): Promise<JobRecord | undefined> 
   try {
     await ensureSchema();
     const { rows } = await getPool().query(
-      `select id, title, goal, status, user_id, video_url, thumb_url, duration_sec, created_at, chapters from loopa_jobs where id = $1`,
+      `select id, title, goal, status, user_id, video_url, thumb_url, duration_sec, created_at, chapters, recipe from loopa_jobs where id = $1`,
       [id],
     );
     return rows[0] ? rowToJobRecord(rows[0]) : undefined;
