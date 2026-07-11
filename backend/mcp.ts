@@ -8,7 +8,7 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { startLoopaRun, loadLoopaRun, type LoopaRun } from "../src/engine/headless-run.ts";
+import { startLoopaRun, loadLoopaRun, getRunLoginState, confirmRunLogin, type LoopaRun } from "../src/engine/headless-run.ts";
 import { loadJobRecord } from "../src/engine/db.ts";
 import { clip, log } from "../src/engine/log.ts";
 
@@ -41,7 +41,7 @@ function frontendBase(): string {
   return first || "http://localhost:3000";
 }
 
-async function runSnapshot(run: LoopaRun, baseUrl: string) {
+async function runSnapshot(run: LoopaRun, baseUrl: string, viewerUserId?: string) {
   // The watch page is the link agents share: it plays the video with title,
   // chapters, and author once composed. The jobId it's keyed on only exists
   // after recording starts, so until then fall back to the backend run URL.
@@ -54,9 +54,26 @@ async function runSnapshot(run: LoopaRun, baseUrl: string) {
       ? ((await loadJobRecord(run.jobId))?.videoUrl ?? undefined)
       : undefined;
   const shareable = pageIsShareable || Boolean(storedUrl);
+  // Ownership-gated: the login live view opens the browser the user types
+  // credentials into, so it is only released to the run's owner.
+  const login = run.status === "awaiting_login" ? getRunLoginState(run.id, viewerUserId) : undefined;
   return {
     runId: run.id,
     status: run.status,
+    ...(login
+      ? {
+          loginUrl: login.url,
+          loginDomain: login.domain,
+          loginNote: login.hosted
+            ? `The run is paused at a ${login.domain} login wall. Ask the user to open loginUrl — Kernel's secure ` +
+              "hosted sign-in page — in their own browser (do NOT open it or enter credentials yourself). The run " +
+              "resumes automatically once they finish; calling confirm_login afterwards is optional. It gives up " +
+              "after 10 minutes."
+            : `The run is paused at a ${login.domain} login wall. Ask the user to open loginUrl in their own browser ` +
+              "and sign in there (do NOT open it or enter credentials yourself), then call confirm_login with this " +
+              "runId. The run resumes automatically; it gives up after 10 minutes.",
+        }
+      : {}),
     watchUrl: pageIsShareable ? pageUrl : (storedUrl ?? pageUrl),
     shareable,
     ...(shareable ? {} : { linkNote: LOCAL_LINK_NOTE }),
@@ -85,9 +102,10 @@ export function buildMcpServer(baseUrl: string, userId?: string, clientId?: stri
         "Once recording starts, watchUrl is the video's watch page in the Loopa web app — that is " +
         "the link to share. Only paste it into PRs, issues, or messages when the response marks it " +
         "shareable: true — a local-only deployment hands out links that only resolve locally. " +
-        "Pages behind a login work only if the user has previously signed in to that site through the " +
-        "Loopa web app (their saved browser session is reused); otherwise the run fails with " +
-        "'login required'. " +
+        "Pages behind a login: if the user previously signed in to that site through Loopa, their saved " +
+        "browser session is reused automatically. Otherwise the run pauses with status 'awaiting_login' " +
+        "and get_loopa returns a loginUrl — ask the user to open it and sign in themselves, then call " +
+        "confirm_login to resume. Never put credentials in the goal. " +
         "CAUTION: the agent will follow the goal literally, including submitting forms, and " +
         "finished loopas are viewable by anyone with the link — never include credentials or goals that " +
         "pay for anything or destroy data.",
@@ -111,7 +129,7 @@ export function buildMcpServer(baseUrl: string, userId?: string, clientId?: stri
         log.warn("mcp", `create_loopa rejected: ${err instanceof Error ? err.message : err}`);
         throw err;
       }
-      const snap = await runSnapshot(run, baseUrl);
+      const snap = await runSnapshot(run, baseUrl, userId);
       return asText({
         ...snap,
         note: snap.shareable
@@ -127,7 +145,10 @@ export function buildMcpServer(baseUrl: string, userId?: string, clientId?: stri
       title: "Get loopa status",
       description:
         "Check the status of a loopa run created with create_loopa. Status is one of: planning, " +
-        "recording, composing, done, error. When 'done', the watchUrl is the video's watch page.",
+        "awaiting_login, recording, composing, done, error. When 'done', the watchUrl is the video's " +
+        "watch page. When 'awaiting_login', the run is paused at a login wall: show the returned " +
+        "loginUrl to the user, have them open it in their own browser and sign in (never open it or " +
+        "enter credentials yourself), then call confirm_login.",
       inputSchema: {
         runId: z.string().describe("The runId returned by create_loopa."),
       },
@@ -137,7 +158,31 @@ export function buildMcpServer(baseUrl: string, userId?: string, clientId?: stri
       const run = await loadLoopaRun(runId);
       log.info("mcp", `get_loopa ${runId} → ${run ? run.status : "not found"}`);
       if (!run) return { ...asText({ error: `no run with id ${runId}` }), isError: true };
-      return asText(await runSnapshot(run, baseUrl));
+      return asText(await runSnapshot(run, baseUrl, userId));
+    },
+  );
+
+  server.registerTool(
+    "confirm_login",
+    {
+      title: "Confirm login",
+      description:
+        "Resume a loopa run paused with status 'awaiting_login'. Call this only after the user says " +
+        "they finished signing in at the loginUrl returned by get_loopa — the run then continues with " +
+        "the signed-in browser session.",
+      inputSchema: {
+        runId: z.string().describe("The runId of the run paused in 'awaiting_login'."),
+      },
+    },
+    async ({ runId }) => {
+      const result = confirmRunLogin(runId, userId);
+      log.info("mcp", `confirm_login ${runId} user=${userId ?? "anon"} → ${result.ok ? "ok" : result.reason}`);
+      if (!result.ok) return { ...asText({ error: result.reason }), isError: true };
+      return asText({
+        ok: true,
+        runId,
+        note: "Login confirmed — the run is resuming with the signed-in session. Keep polling get_loopa every ~30s until status is 'done'.",
+      });
     },
   );
 

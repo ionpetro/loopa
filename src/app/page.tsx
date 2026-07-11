@@ -412,18 +412,32 @@ export default function Home() {
                     <LockKeyholeOpenIcon /> i&apos;m logged in — continue
                   </Button>
                 </div>
-                <WebPreview className="w-full border-0" defaultUrl={stage.liveViewUrl}>
-                  <WebPreviewNavigation>
-                    {/* decorative macOS traffic lights */}
-                    <span aria-hidden className="flex items-center gap-1.5 pl-1.5 pr-2">
-                      <span className="size-3 rounded-full bg-[#ff5f57]" />
-                      <span className="size-3 rounded-full bg-[#febc2e]" />
-                      <span className="size-3 rounded-full bg-[#28c840]" />
-                    </span>
-                    <WebPreviewUrl readOnly />
-                  </WebPreviewNavigation>
-                  <WebPreviewBody className="aspect-[1280/800] w-full flex-none" allow="clipboard-read; clipboard-write" />
-                </WebPreview>
+                {stage.hosted ? (
+                  <div className="flex aspect-[1280/800] w-full flex-none flex-col items-center justify-center gap-4">
+                    <p className="max-w-sm text-center font-mono text-xs text-muted-foreground">
+                      sign in to {stage.domain} on kernel&apos;s secure page — loopa never sees your
+                      credentials, and the loopa continues automatically once you&apos;re in
+                    </p>
+                    <Button asChild size="sm">
+                      <a href={stage.liveViewUrl} target="_blank" rel="noreferrer">
+                        <LockKeyholeOpenIcon /> open secure sign-in
+                      </a>
+                    </Button>
+                  </div>
+                ) : (
+                  <WebPreview className="w-full border-0" defaultUrl={stage.liveViewUrl}>
+                    <WebPreviewNavigation>
+                      {/* decorative macOS traffic lights */}
+                      <span aria-hidden className="flex items-center gap-1.5 pl-1.5 pr-2">
+                        <span className="size-3 rounded-full bg-[#ff5f57]" />
+                        <span className="size-3 rounded-full bg-[#febc2e]" />
+                        <span className="size-3 rounded-full bg-[#28c840]" />
+                      </span>
+                      <WebPreviewUrl readOnly />
+                    </WebPreviewNavigation>
+                    <WebPreviewBody className="aspect-[1280/800] w-full flex-none" allow="clipboard-read; clipboard-write" />
+                  </WebPreview>
+                )}
               </Fragment>
             )}
 

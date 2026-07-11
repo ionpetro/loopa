@@ -7,7 +7,10 @@ import { BrowserSession, observationText } from "./browser-session.ts";
 import { getLocalAgentStore } from "./sdk-store.ts";
 import { composeVideo } from "./compose.ts";
 import { createJob, jobDir, DATA_DIR } from "./jobs.ts";
-import { ensureKernelProfile, kernelProfileExists, profileNameFor } from "./kernel.ts";
+import {
+  authDomainFor, ensureAuthConnection, ensureKernelProfile, kernelProfileExists, profileNameFor,
+  startManagedLogin, waitForManagedLogin,
+} from "./kernel.ts";
 import { flushDb, persistJob, persistMessage, persistSession } from "./db.ts";
 import { clip, log, since } from "./log.ts";
 import { uploadThumbnail, uploadVideo } from "./storage.ts";
@@ -320,6 +323,60 @@ export class AgentSession {
           if (this.job) return { ...text("A loopa is already recording — logins must happen before start_loop."), isError: true };
           if (this.loginResolve) return { ...text("A login handoff is already open."), isError: true };
           const host = new URL(this.params.startUrl).host;
+
+          // Kernel Managed Auth first (paid plans): the user signs in on a
+          // Kernel-hosted page — SSO/2FA handled, credentials never touch us
+          // or the model — and Kernel keeps the session fresh on its own.
+          // Setup failures (403 on the free tier) fall back to the live-view
+          // handoff below.
+          if (this.userId) {
+            let flow: { connectionId: string; hostedUrl: string } | null = null;
+            let alreadyAuthed = false;
+            try {
+              const conn = await ensureAuthConnection(profileNameFor(this.userId, host), authDomainFor(host));
+              if (conn.authenticated) alreadyAuthed = true;
+              else flow = await startManagedLogin(conn.id);
+            } catch (err) {
+              log.warn(
+                `session ${this.id}`,
+                `managed auth unavailable — using live-view handoff: ${err instanceof Error ? err.message : err}`,
+              );
+            }
+            if (alreadyAuthed) {
+              return text(
+                `The user's saved sign-in for ${host} is still valid (Kernel keeps it fresh automatically) — no login step needed. ` +
+                  `The recording browser will open already signed in. Confirm the plan with the user, then call start_loop.`,
+              );
+            }
+            if (flow) {
+              log.info(`session ${this.id}`, `hosted login flow open for ${host} — waiting up to ${LOGIN_TIMEOUT_MS / 60_000}min for the user`);
+              this.emit({ type: "needs_login", url: flow.hostedUrl, domain: host, hosted: true });
+              let userSaysDone = false;
+              this.loginResolve = (ok) => { userSaysDone = ok; };
+              let confirmed = false;
+              try {
+                confirmed = await waitForManagedLogin(flow.connectionId, Date.now() + LOGIN_TIMEOUT_MS, () => userSaysDone);
+              } catch (err) {
+                log.error(`session ${this.id}`, `managed login poll failed: ${err instanceof Error ? err.message : err}`);
+              } finally {
+                this.loginResolve = null;
+              }
+              log.info(`session ${this.id}`, `hosted login for ${host} ${confirmed ? "authenticated" : "not completed"}`);
+              this.emit({ type: "login_done", confirmed });
+              if (!confirmed) {
+                return {
+                  ...text("The user did not complete the hosted sign-in (it failed, expired, or timed out after 10 minutes). Ask whether to try again."),
+                  isError: true,
+                };
+              }
+              return text(
+                `The user finished signing in to ${host} on Kernel's hosted page. The session is saved to their profile and ` +
+                  `Kernel re-authenticates it automatically, so this and future loopas on ${host} open already signed in. ` +
+                  `Nothing was recorded. Confirm the plan with the user, then call start_loop.`,
+              );
+            }
+          }
+
           let profileSaved = false;
           try {
             if (!this.browser) {
@@ -366,7 +423,7 @@ export class AgentSession {
             clearTimeout(timer);
             this.loginResolve = null;
             log.info(`session ${this.id}`, `login handoff for ${host} ${confirmed ? "confirmed by the user" : "timed out"}`);
-            this.emit({ type: "login_done" });
+            this.emit({ type: "login_done", confirmed });
 
             if (!confirmed) {
               await this.browser?.close().catch(() => {});

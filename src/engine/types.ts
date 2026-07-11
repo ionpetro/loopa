@@ -133,8 +133,8 @@ export type SessionEvent =
   | { type: "agent_turn_done" }
   | { type: "tool_call"; name: string }
   | { type: "plan"; goal: string; startUrl: string }
-  | { type: "needs_login"; url: string; domain: string }
-  | { type: "login_done" }
+  | { type: "needs_login"; url: string; domain: string; hosted?: boolean }
+  | { type: "login_done"; confirmed: boolean }
   | { type: "job_created"; jobId: string; goal: string; startUrl: string }
   | { type: "live_view"; jobId: string; url: string }
   | { type: "action"; jobId: string; n: number; action: string; caption: string; ok: boolean; error?: string }

@@ -6,13 +6,13 @@
  * loopa and poll until the video is ready.
  */
 import { randomUUID } from "node:crypto";
-import { getOrCreateSession } from "./agent-session.ts";
+import { getOrCreateSession, type AgentSession } from "./agent-session.ts";
 import { loadRunRecord, persistRun } from "./db.ts";
 import { clip, log, since } from "./log.ts";
 import { assertRunQuota } from "./quota.ts";
 import type { ActionLog, SessionEvent } from "./types.ts";
 
-export type RunStatus = "planning" | "recording" | "composing" | "done" | "error";
+export type RunStatus = "planning" | "awaiting_login" | "recording" | "composing" | "done" | "error";
 
 export interface LoopaRun {
   id: string;
@@ -41,6 +41,16 @@ const runs: Map<string, LoopaRun> = ((globalThis as any).__loopaRuns ??= new Map
 // the run's live agent session.
 const runSessionKeys: Map<string, string> = ((globalThis as any).__loopaRunSessionKeys ??= new Map());
 
+// Live agent session per run, so confirmRunLogin can resolve a pending
+// request_login without exposing the session id (see runSessionKeys above).
+const runSessions: Map<string, AgentSession> = ((globalThis as any).__loopaRunSessions ??= new Map());
+
+// Login-handoff live-view URL per run. Deliberately NOT a LoopaRun field: the
+// run's JSON is public (watch pages, /api/runs, DB) keyed only on the runId,
+// and this URL opens the browser the user is typing credentials into. It is
+// served solely through getRunLoginState, which checks ownership.
+const runLoginState: Map<string, { url: string; domain: string; hosted?: boolean }> = ((globalThis as any).__loopaRunLoginState ??= new Map());
+
 const autonomousPrompt = (goal: string, startUrl: string) => `Autonomous run — there is no human in this chat. Never ask questions or wait for confirmation; the plan below is pre-approved.
 
 Goal: ${goal}
@@ -54,7 +64,7 @@ Do all of this in this single turn:
 
 If an action fails, recover once and keep going; if the loopa cannot be completed, call finish_loop anyway so a partial video is produced.
 
-There is no human to log in: never call request_login. If the user has previously logged in to this site through Loopa, the browser opens already signed in. If a login wall still blocks the goal, call abort_loop with reason "login required — open ${startUrl} in the Loopa app once to save your sign-in" instead of producing a video of a login page.`;
+Login walls: if the user has previously logged in to this site through Loopa, the browser opens already signed in. If a login wall still blocks the goal, call request_login — the person who requested this run is polling its status out-of-band and will sign in through a secure window themselves; the tool waits up to 10 minutes for them. If the wall only appears mid-recording, call abort_loop first, then request_login, then start_loop to re-record cleanly. NEVER type or guess credentials. If request_login times out or fails, do not record a login page: abort_loop any open recording with reason "login required", otherwise just end the turn — the run is failed automatically.`;
 
 /**
  * One headless run at a time. Three concurrent runs on the shared-cpu-1x box
@@ -112,6 +122,8 @@ export async function startLoopaRun(goal: string, startUrl: string, userId?: str
       releaseRunSlot();
       // Run is terminal; the session secret is no longer needed.
       runSessionKeys.delete(run.id);
+      runSessions.delete(run.id);
+      runLoginState.delete(run.id);
     }
   })();
   return run;
@@ -131,6 +143,9 @@ async function executeRun(run: LoopaRun) {
       return;
     }
     if (run.jobId || run.actions.length) break;
+    // A login-required failure is the user's to resolve — retrying would just
+    // hold the run slot through another 10-minute handoff wait.
+    if (run.error?.startsWith("login required")) break;
     if (attempt < MAX_ATTEMPTS) {
       log.warn(`run ${run.id}`, `attempt ${attempt} failed before recording (${run.error ?? "no detail"}) — retrying`);
       run.status = "planning";
@@ -156,6 +171,7 @@ function runAttempt(run: LoopaRun, attempt: number): Promise<void> {
     runSessionKeys.set(run.id, key);
   }
   const session = getOrCreateSession(`sess-${key}-a${attempt}`);
+  runSessions.set(run.id, session);
   // Attribute the session (and therefore the job/video) to the OAuth caller so
   // MCP-created videos land in their library like UI-created ones.
   session.setUser(run.userId);
@@ -168,6 +184,12 @@ function runAttempt(run: LoopaRun, attempt: number): Promise<void> {
   const watchdog = setInterval(() => {
     if (run.status === "done" || run.status === "error") {
       clearInterval(watchdog);
+      return;
+    }
+    // A login handoff legitimately sits idle while the user signs in (up to
+    // 10 min, enforced by request_login itself) — freeze the stall clock.
+    if (run.status === "awaiting_login") {
+      lastEventAt = Date.now();
       return;
     }
     if (Date.now() - lastEventAt > STALL_MS) {
@@ -188,7 +210,20 @@ function runAttempt(run: LoopaRun, attempt: number): Promise<void> {
     if (ev.type === "job_created") {
       run.jobId = ev.jobId;
       run.status = "recording";
+      // A re-record after an aborted take (login wall mid-recording) starts
+      // clean — the aborted job's error must not outlive it.
+      run.error = undefined;
       log.info(`run ${run.id}`, `recording as job ${ev.jobId}`);
+    } else if (ev.type === "needs_login") {
+      run.status = "awaiting_login";
+      runLoginState.set(run.id, { url: ev.url, domain: ev.domain, hosted: ev.hosted });
+      log.info(`run ${run.id}`, `paused for login to ${ev.domain} — waiting for confirm_login`);
+    } else if (ev.type === "login_done") {
+      runLoginState.delete(run.id);
+      if (run.status === "awaiting_login") run.status = "planning";
+      // Timed out: pre-recording there is no job to abort, so nothing else
+      // would ever set a meaningful error (and the caller shouldn't retry).
+      if (!ev.confirmed) run.error ??= "login required — the sign-in was not completed within 10 minutes";
     } else if (ev.type === "live_view") {
       run.liveViewUrl = ev.url;
     } else if (ev.type === "action") {
@@ -196,9 +231,11 @@ function runAttempt(run: LoopaRun, attempt: number): Promise<void> {
     } else if (ev.type === "job_status") {
       if (ev.status === "composing") run.status = "composing";
       if (ev.status === "error" && run.status !== "done") {
-        run.status = "error";
-        // Carry the job's failure reason: pollers used to see status "error"
-        // with error null (e.g. the ffmpeg watchdog kill was invisible).
+        // Carry the job's failure reason but do NOT mark the run terminal yet:
+        // the agent may abort a take at a login wall and continue with
+        // request_login + a re-record in the same turn, and a poller that saw
+        // a transient "error" would give up. executeRun settles the final
+        // status once the turn actually ends without a video.
         run.error ??= ev.error;
       }
     } else if (ev.type === "video_ready") {
@@ -225,6 +262,30 @@ function runAttempt(run: LoopaRun, attempt: number): Promise<void> {
 
 export function getLoopaRun(id: string): LoopaRun | undefined {
   return runs.get(id);
+}
+
+/**
+ * Login-handoff live view for a run paused in awaiting_login. Ownership-gated:
+ * this URL opens the browser the user is signing in to, so unlike the rest of
+ * the run snapshot it is only released to the caller the run belongs to.
+ */
+export function getRunLoginState(id: string, viewerUserId?: string): { url: string; domain: string; hosted?: boolean } | undefined {
+  const run = runs.get(id);
+  if (!run || run.userId !== viewerUserId) return undefined;
+  return runLoginState.get(id);
+}
+
+/**
+ * Resolve a run's pending request_login (the MCP confirm_login tool). The
+ * session id stays server-side — callers only ever hold the runId.
+ */
+export function confirmRunLogin(id: string, viewerUserId?: string): { ok: true } | { ok: false; reason: string } {
+  const run = runs.get(id);
+  if (!run) return { ok: false, reason: `no live run with id ${id} — it may have finished or run on a previous server process` };
+  if (run.userId !== viewerUserId) return { ok: false, reason: "this run belongs to a different user" };
+  const session = runSessions.get(id);
+  if (!session?.confirmLogin()) return { ok: false, reason: `no login is pending for this run (status: ${run.status})` };
+  return { ok: true };
 }
 
 /** In-flight (incl. queued) runs owned by a user (quota enforcement). */

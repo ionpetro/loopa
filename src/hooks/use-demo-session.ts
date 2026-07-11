@@ -17,7 +17,7 @@ export interface ChatMessage {
 export type StageState =
   | { mode: "idle" }
   | { mode: "plan"; goal: string; startUrl: string }
-  | { mode: "login"; liveViewUrl: string; domain: string }
+  | { mode: "login"; liveViewUrl: string; domain: string; hosted?: boolean }
   | { mode: "live"; jobId: string; liveViewUrl?: string; composing: boolean }
   | { mode: "done"; jobId: string; videoUrl: string; durationSec: number; chapters?: { title: string; start: number }[] };
 
@@ -38,8 +38,8 @@ type SessionEvent =
   | { type: "agent_turn_done" }
   | { type: "tool_call"; name: string }
   | { type: "plan"; goal: string; startUrl: string }
-  | { type: "needs_login"; url: string; domain: string }
-  | { type: "login_done" }
+  | { type: "needs_login"; url: string; domain: string; hosted?: boolean }
+  | { type: "login_done"; confirmed?: boolean }
   | { type: "job_created"; jobId: string }
   | { type: "live_view"; url: string }
   | { type: "action"; n: number; action: string; caption: string; ok: boolean }
@@ -161,7 +161,7 @@ export function useLoopaSession() {
           setStage({ mode: "plan", goal: ev.goal, startUrl: ev.startUrl });
           break;
         case "needs_login":
-          setStage({ mode: "login", liveViewUrl: ev.url, domain: ev.domain });
+          setStage({ mode: "login", liveViewUrl: ev.url, domain: ev.domain, hosted: ev.hosted });
           break;
         case "login_done":
           setStage(planRef.current ? { mode: "plan", ...planRef.current } : { mode: "idle" });

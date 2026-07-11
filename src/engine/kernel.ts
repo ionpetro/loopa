@@ -88,3 +88,63 @@ export async function kernelProfileExists(name: string): Promise<boolean> {
     throw err;
   }
 }
+
+// --- managed auth --------------------------------------------------------------
+//
+// Kernel Managed Auth (paid plans): a connection binds a profile to a domain,
+// login happens on a Kernel-hosted page (SSO/2FA handled, credentials never
+// touch us or the model), and Kernel re-authenticates on its own via health
+// checks. On the free tier every call here 403s — callers fall back to the
+// live-view handoff.
+
+/** Kernel keys auth connections on the bare domain, not the full host. */
+export const authDomainFor = (host: string) => host.replace(/^www\./, "");
+
+export interface ManagedLoginFlow {
+  connectionId: string;
+  /** Kernel-hosted page the user signs in on. */
+  hostedUrl: string;
+}
+
+/** Find or create the auth connection binding this profile to the domain. */
+export async function ensureAuthConnection(
+  profileName: string,
+  domain: string,
+): Promise<{ id: string; authenticated: boolean }> {
+  const page = await kernelClient().auth.connections.list({ profile_name: profileName, domain });
+  const existing = page.items?.[0];
+  if (existing) return { id: existing.id, authenticated: existing.status === "AUTHENTICATED" };
+  // profile_name auto-creates the profile; save_credentials + health checks
+  // default on, so Kernel re-auths by itself once the user logged in once.
+  const created = await kernelClient().auth.connections.create({ domain, profile_name: profileName });
+  return { id: created.id, authenticated: created.status === "AUTHENTICATED" };
+}
+
+/** Start a hosted login flow for the connection. */
+export async function startManagedLogin(connectionId: string): Promise<ManagedLoginFlow> {
+  const login = await kernelClient().auth.connections.login(connectionId, {});
+  return { connectionId, hostedUrl: login.hosted_url };
+}
+
+/**
+ * Poll the connection until its login flow settles or the deadline passes.
+ * `userSaysDone` (the UI/MCP confirm) grants a short grace window, then the
+ * connection's own status is the verdict — the user saying "done" cannot
+ * overrule Kernel still reporting NEEDS_AUTH.
+ */
+export async function waitForManagedLogin(
+  connectionId: string,
+  deadlineMs: number,
+  userSaysDone: () => boolean,
+): Promise<boolean> {
+  const GRACE_POLLS_AFTER_CONFIRM = 5;
+  let pollsSinceConfirm = 0;
+  while (Date.now() < deadlineMs) {
+    const conn = await kernelClient().auth.connections.retrieve(connectionId);
+    if (conn.status === "AUTHENTICATED" || conn.flow_status === "SUCCESS") return true;
+    if (conn.flow_status === "FAILED" || conn.flow_status === "EXPIRED" || conn.flow_status === "CANCELED") return false;
+    if (userSaysDone() && ++pollsSinceConfirm > GRACE_POLLS_AFTER_CONFIRM) return false;
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  return false;
+}
