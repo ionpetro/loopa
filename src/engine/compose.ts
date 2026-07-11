@@ -73,6 +73,11 @@ export interface ComposeInput {
    * don't pad the cut even when the page keeps animating.
    */
   activeWindows?: { start: number; end: number }[];
+  /**
+   * Agent-declared broad sections (capture-clock ms). When present these
+   * become the player chapters instead of the one-per-caption fallback.
+   */
+  sections?: { title: string; t: number }[];
   /** Encode progress, 0..1 (based on ffmpeg's -progress out_time). */
   onProgress?: (pct: number) => void;
 }
@@ -98,6 +103,10 @@ let encodeQueue: Promise<unknown> = Promise.resolve();
  * Stitch screencast frames into a captioned, branded MP4.
  * Inter-frame duration is capped at 1.6s — the screencast only emits frames
  * when pixels change, so long agent "thinking" pauses collapse automatically.
+ * The cut plays at VIDEO_SPEED× real time (default 2×) — real-time browsing
+ * reads painfully slowly in a walkthrough; captions, chapters, and the
+ * reported duration all live on the sped-up timeline. The final frame's hold
+ * stays unscaled so the video still ends on a settled beat.
  */
 export function composeVideo(input: ComposeInput): Promise<ComposeResult> {
   const result = encodeQueue.then(() => composeVideoNow(input));
@@ -113,9 +122,10 @@ async function composeVideoNow(input: ComposeInput): Promise<ComposeResult> {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "loopa-"));
   fs.mkdirSync(outDir, { recursive: true });
 
+  const SPEED = Math.max(1, Number(process.env.VIDEO_SPEED) || 2);
   const t0 = frames[0].t;
   const durs = frames.map((f, i) =>
-    i < frames.length - 1 ? Math.max(0.02, Math.min(1.6, (frames[i + 1].t - f.t) / 1000)) : 0.8,
+    i < frames.length - 1 ? Math.max(0.02, Math.min(1.6, (frames[i + 1].t - f.t) / 1000)) / SPEED : 0.8,
   );
 
   // Collapse idle time: frames outside every action window (grown by a small
@@ -236,10 +246,18 @@ async function composeVideoNow(input: ComposeInput): Promise<ComposeResult> {
   fs.rmSync(tmp, { recursive: true, force: true });
 
   // Same mapping the caption overlays use, so player chapters line up with
-  // what's burned into the video.
-  const chapters = captions
-    .filter((c) => c.text)
-    .map((c) => ({ title: c.text, start: +Math.max(0, videoTimeAt(Math.max(c.t, t0))).toFixed(2) }));
+  // what's burned into the video. Agent-declared sections win — a chapter per
+  // caption is too granular to navigate; per-caption is only the fallback.
+  const chapters = input.sections?.length
+    ? input.sections.map((s, i) => ({
+        title: s.title,
+        // The first section labels the whole opening, even when its step
+        // started a beat after frame zero.
+        start: i === 0 ? 0 : +Math.max(0, videoTimeAt(Math.max(s.t, t0))).toFixed(2),
+      }))
+    : captions
+        .filter((c) => c.text)
+        .map((c) => ({ title: c.text, start: +Math.max(0, videoTimeAt(Math.max(c.t, t0))).toFixed(2) }));
 
   return {
     finalPath,

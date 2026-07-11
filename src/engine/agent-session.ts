@@ -44,7 +44,7 @@ Call start_loop. It opens a recorded cloud browser at the start URL and returns 
 
 Then repeat: call browser_action with exactly ONE action (click/type/hover/scroll/goto/wait) toward the goal. For click/type/hover set target_index from the LATEST elements list. Always include a short viewer-facing "caption" — it's overlaid on the video while that action plays. Each call returns a fresh elements list; do not call observe_page unless the list seems stale or you need to see the page.
 
-When the goal is visibly achieved, call finish_loop with a short video title. It stops recording, produces the MP4, and returns the result. Tell the user it's ready and ask if they want another take or a different loopa.
+When the goal is visibly achieved, call finish_loop with a short video title AND 2-5 broad sections that group your steps into viewer-facing arcs (each section = a title plus the step number it starts at, e.g. "Finding the product" starting at step 1, "Checkout" at step 9). Sections become the video's chapter list — think scene titles, not step captions. finish_loop stops recording, produces the MP4, and returns the result. Tell the user it's ready and ask if they want another take or a different loopa.
 
 If a login wall unexpectedly blocks the loopa mid-recording, do NOT type credentials — call abort_loop, then offer to set up the login (request_login) and re-record.
 
@@ -98,6 +98,8 @@ export class AgentSession {
   private loginResolve: ((confirmed: boolean) => void) | null = null;
   private lastObs: Observation | null = null;
   private actionCount = 0;
+  /** Capture timestamp of every action, 1-based via index+1 (section starts). */
+  private actionTimes: number[] = [];
   private captions: TimedCaption[] = [];
   private steps: RecipeStep[] = [];
 
@@ -473,6 +475,7 @@ export class AgentSession {
               sessionId: this.id,
             });
             this.actionCount = 0;
+            this.actionTimes = [];
             this.captions = [];
             this.steps = [{ action: "goto", url: this.params.startUrl, caption: "Open the page", waitAfter: 600 }];
             log.info(`job ${this.job.id}`, `created (session ${this.id}, start ${this.params.startUrl}, goal "${clip(this.params.goal)}")`);
@@ -552,6 +555,7 @@ export class AgentSession {
             caption: args.caption != null ? String(args.caption) : "",
           };
 
+          this.actionTimes.push(this.browser.now());
           if (a.caption) this.captions.push({ t: this.browser.now(), text: a.caption });
           const obsBefore = this.lastObs;
           const result = await this.browser.act(a);
@@ -596,10 +600,28 @@ export class AgentSession {
       },
 
       finish_loop: {
-        description: "Stop recording and produce the final MP4. Call when the goal is visibly achieved.",
+        description:
+          "Stop recording and produce the final MP4. Call when the goal is visibly achieved. " +
+          "Pass 2-5 broad sections grouping the steps into viewer-facing arcs — they become the " +
+          "video's chapter list. Section titles are scene names ('Finding the product'), not " +
+          "step-by-step captions.",
         inputSchema: {
           type: "object",
-          properties: { title: { type: "string", description: "Short video title" } },
+          properties: {
+            title: { type: "string", description: "Short video title" },
+            sections: {
+              type: "array",
+              description: "2-5 broad chapters, in order. Omit only for single-scene videos.",
+              items: {
+                type: "object",
+                properties: {
+                  title: { type: "string", description: "Scene name shown in the player's chapter list" },
+                  start_step: { type: "number", description: "1-based step number this section starts at" },
+                },
+                required: ["title", "start_step"],
+              },
+            },
+          },
           required: ["title"],
         },
         execute: async (args: any): Promise<ToolResult> => {
@@ -633,11 +655,20 @@ export class AgentSession {
             await browser.close();
             this.browser = null;
 
+            // Agent-declared sections → chapter marks at each section's first
+            // action. Invalid entries are dropped; compose falls back to
+            // per-caption chapters when nothing survives.
+            const sections = (Array.isArray(args.sections) ? args.sections : [])
+              .map((s: any) => ({ title: String(s?.title ?? "").trim(), n: Math.round(Number(s?.start_step)) }))
+              .filter((s: { title: string; n: number }) => s.title && s.n >= 1 && s.n <= this.actionTimes.length)
+              .map((s: { title: string; n: number }) => ({ title: s.title, t: this.actionTimes[s.n - 1] }))
+              .sort((a: { t: number }, b: { t: number }) => a.t - b.t);
+
             stage("encoding cut", 0);
             const composeStart = Date.now();
             let lastPct = 0;
             const out = await composeVideo({
-              frames, captions: this.captions, overlays, activeWindows: browser.getActionWindows(),
+              frames, captions: this.captions, overlays, sections, activeWindows: browser.getActionWindows(),
               outDir: jobDir(job.id), width: OUTPUT.width, height: OUTPUT.height, fps: OUTPUT.fps,
               onProgress: (pct) => {
                 // Encode is far faster than realtime; only ship meaningful steps.

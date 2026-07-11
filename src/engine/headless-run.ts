@@ -60,7 +60,7 @@ Do all of this in this single turn:
 1. Call set_loop_params with the goal and start URL exactly as given.
 2. Immediately call start_loop — do not ask for confirmation.
 3. Record the loopa with browser_action calls: shortest clean path, short viewer-facing captions.
-4. When the goal is visibly achieved, call finish_loop with a short title.
+4. When the goal is visibly achieved, call finish_loop with a short title and 2-5 broad sections grouping the steps into viewer-facing arcs (scene names + the step number each starts at) — they become the video's chapter list.
 
 If an action fails, recover once and keep going; if the loopa cannot be completed, call finish_loop anyway so a partial video is produced.
 
