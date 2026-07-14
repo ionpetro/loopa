@@ -2,9 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { Agent, type SDKAgent } from "@cursor/sdk";
+import { jsonSchema, stepCountIs, streamText, tool, type ModelMessage, type ToolSet } from "ai";
+import { anthropic } from "@ai-sdk/anthropic";
+import { openai } from "@ai-sdk/openai";
 import { BrowserSession, observationText } from "./browser-session.ts";
-import { getLocalAgentStore } from "./sdk-store.ts";
 import { composeVideo } from "./compose.ts";
 import { createJob, jobDir, DATA_DIR } from "./jobs.ts";
 import {
@@ -21,6 +22,8 @@ import type {
 } from "./types.ts";
 
 const MAX_ACTIONS = 24;
+/** Ceiling on model↔tool round-trips per user turn (24 actions + setup/teardown headroom). */
+const MAX_STEPS = 40;
 const OUTPUT = { fps: 30, width: 1280, height: 720, quality: 60 };
 /** How long a login handoff waits for the user before giving up. */
 const LOGIN_TIMEOUT_MS = 10 * 60_000;
@@ -57,6 +60,26 @@ interface ToolResult {
 
 const text = (s: string): ToolResult => ({ content: [{ type: "text", text: s }] });
 
+/**
+ * Map a ToolResult (text + optional screenshot, MCP-style) to the AI SDK's
+ * tool-output shape so images reach the model as real image parts. Error
+ * results are always text-only here, so `error-text` carries them.
+ */
+function toolResultToModelOutput({ output }: { output: ToolResult }) {
+  if (output.isError) {
+    const msg = output.content.map((c) => (c.type === "text" ? c.text : "")).filter(Boolean).join("\n");
+    return { type: "error-text" as const, value: msg || "tool failed" };
+  }
+  return {
+    type: "content" as const,
+    value: output.content.map((c) =>
+      c.type === "text"
+        ? { type: "text" as const, text: c.text }
+        : { type: "file" as const, data: { type: "data" as const, data: c.data }, mediaType: c.mimeType },
+    ),
+  };
+}
+
 /** Convert a live action into a replayable recipe step (same schema as feature-video-agent). */
 function stepFromAction(a: BrowserAction, obs: Observation | null): RecipeStep {
   const cap = a.caption || undefined;
@@ -79,17 +102,21 @@ function stepFromAction(a: BrowserAction, obs: Observation | null): RecipeStep {
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || "loopa";
 
+/** Route a model id to its AI SDK provider (claude-* → Anthropic, everything else → OpenAI). */
+const modelFor = (id: string) => (id.startsWith("claude") ? anthropic(id) : openai(id));
+const apiKeyEnvFor = (id: string) => (id.startsWith("claude") ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY");
+
 export class AgentSession {
   readonly id: string;
-  private agent: SDKAgent | null = null;
+  /** Model-facing conversation history — the API is stateless, so we own it. */
+  private history: ModelMessage[] = [];
   private emitter = new EventEmitter();
-  private hasStarted = false;
   private busy = false;
   private userId: string | undefined;
   private turnParts: ChatPart[] | null = null;
   /** When the current job's cloud browser came up (usage accounting). */
   private jobStartedAt = 0;
-  private model = "composer-2.5";
+  private model = "gpt-5.5";
 
   private params: LoopaParams | null = null;
   private job: LoopaJob | null = null;
@@ -151,32 +178,13 @@ export class AgentSession {
 
   // --- chat ---------------------------------------------------------------
 
-  private async ensureAgent(): Promise<SDKAgent> {
-    if (this.agent) return this.agent;
-    const apiKey = process.env.CURSOR_API_KEY;
-    if (!apiKey) throw new Error("CURSOR_API_KEY is not set");
-    this.agent = await Agent.create({
-      apiKey,
-      model: { id: this.model },
-      local: { cwd: process.cwd(), customTools: this.buildTools(), store: getLocalAgentStore() },
-    });
-    return this.agent;
-  }
-
   /**
-   * Switch the Cursor model. The agent is recreated on the next turn (a model
-   * can't change mid-agent), so its internal context resets and the system
-   * prompt is re-sent; the client keeps its own chat history.
+   * Switch the model. Requests are stateless, so the change simply applies
+   * from the next turn; the conversation history is preserved.
    */
   setModel(modelId: string): void {
     if (!modelId || modelId === this.model) return;
     this.model = modelId;
-    const old = this.agent;
-    this.agent = null;
-    this.hasStarted = false;
-    if (old) {
-      Promise.resolve(old[Symbol.asyncDispose]?.()).catch(() => {});
-    }
   }
 
   get isBusy(): boolean {
@@ -209,46 +217,39 @@ export class AgentSession {
     persistSession(this.id, this.userId);
     persistMessage(this.id, "user", [{ type: "text", text: message }]);
     try {
-      const agent = await this.ensureAgent();
-      const isFirst = !this.hasStarted;
-      this.hasStarted = true;
-      const prompt = isFirst ? `${SYSTEM}\n\nUser: ${message}` : message;
-      const run = await agent.send(prompt);
-      for await (const event of run.stream()) {
-        if (event.type === "assistant") {
-          for (const block of event.message.content) {
-            if (block.type === "text" && block.text) {
-              this.emit({ type: "agent_text", text: block.text });
-              const tail = assistantParts[assistantParts.length - 1];
-              if (tail?.type === "text") tail.text += block.text;
-              else assistantParts.push({ type: "text", text: block.text });
-            }
-          }
-        } else if (event.type === "tool_call" && event.status === "running" && event.name !== "mcp") {
-          // Custom ("mcp") tools announce themselves via noteToolCall with a
-          // real label; only surface non-custom tools from the stream.
-          this.emit({ type: "tool_call", name: event.name });
-          assistantParts.push({
-            type: "tool-call",
-            toolCallId: `tc-${assistantParts.length}`,
-            toolName: event.name,
-          });
+      const keyEnv = apiKeyEnvFor(this.model);
+      if (!process.env[keyEnv]) throw new Error(`${keyEnv} is not set`);
+      this.history.push({ role: "user", content: message });
+      const result = streamText({
+        model: modelFor(this.model),
+        system: SYSTEM,
+        messages: this.history,
+        tools: this.buildTools(),
+        stopWhen: stepCountIs(MAX_STEPS),
+      });
+      for await (const part of result.fullStream) {
+        if (part.type === "text-delta" && part.text) {
+          this.emit({ type: "agent_text", text: part.text });
+          const tail = assistantParts[assistantParts.length - 1];
+          if (tail?.type === "text") tail.text += part.text;
+          else assistantParts.push({ type: "text", text: part.text });
+        } else if (part.type === "error") {
+          // Tool executes announce themselves via noteToolCall; only failures
+          // need surfacing from the stream itself.
+          throw part.error instanceof Error ? part.error : new Error(String(part.error));
         }
       }
-      const result = await run.wait();
-      if (result.status === "error") {
-        log.error(`session ${this.id}`, `agent run failed: ${JSON.stringify(result)}`);
-        const detail = (result as any).error?.message ?? (result as any).error ?? (result as any).message;
-        this.emit({ type: "error", message: `Agent run failed${detail ? `: ${detail}` : "."}` });
-        // A run that died without streaming anything is the "sick process"
-        // signature — see noteInstantAgentFailure.
-        if (assistantParts.length === 0 && noteInstantAgentFailure()) {
-          this.emit({ type: "error", message: "Loopa is restarting itself to recover — try again in ~30 seconds." });
-        }
-      }
+      // Append the turn's assistant/tool messages so the next request carries them.
+      const response = await result.response;
+      this.history.push(...response.messages);
     } catch (err) {
       log.error(`session ${this.id}`, "turn crashed", err);
       this.emit({ type: "error", message: err instanceof Error ? err.message : String(err) });
+      // A turn that died without producing any output is the old "sick
+      // process" signature — kept as a safety net; see noteInstantAgentFailure.
+      if (assistantParts.length === 0 && noteInstantAgentFailure()) {
+        this.emit({ type: "error", message: "Loopa is restarting itself to recover — try again in ~30 seconds." });
+      }
     } finally {
       this.busy = false;
       // If a recording was left open (agent errored mid-loopa), tear it down.
@@ -295,30 +296,32 @@ export class AgentSession {
     }
   }
 
-  private buildTools() {
+  private buildTools(): ToolSet {
     return {
-      set_loop_params: {
+      set_loop_params: tool({
         description: "Save the confirmed loopa goal and start URL. Call once when both are known, before asking the user to confirm.",
-        inputSchema: {
+        inputSchema: jsonSchema<any>({
           type: "object",
           properties: { goal: { type: "string" }, startUrl: { type: "string" } },
           required: ["goal", "startUrl"],
-        },
+        }),
+        toModelOutput: toolResultToModelOutput,
         execute: async (args: any): Promise<ToolResult> => {
           this.noteToolCall("plan");
           this.params = { goal: String(args.goal), startUrl: String(args.startUrl) };
           this.emit({ type: "plan", goal: this.params.goal, startUrl: this.params.startUrl });
           return text(JSON.stringify({ saved: true, ...this.params, next: "Ask the user to confirm, then call start_loop." }));
         },
-      },
+      }),
 
-      request_login: {
+      request_login: tool({
         description:
           "Open the site in a private, UN-recorded cloud browser and hand control to the user so they log in themselves. Blocks until they confirm (or 10 minutes pass); their session is saved for this and future loopas on the site. Call after set_loop_params and before start_loop when the loopa needs their account. Never ask the user for credentials.",
-        inputSchema: {
+        inputSchema: jsonSchema<any>({
           type: "object",
           properties: { login_url: { type: "string", description: "Page to open for the login; defaults to the start URL." } },
-        },
+        }),
+        toModelOutput: toolResultToModelOutput,
         execute: async (args: any): Promise<ToolResult> => {
           this.noteToolCall("login");
           if (!this.params) return { ...text("No loopa params saved — call set_loop_params first."), isError: true };
@@ -454,11 +457,12 @@ export class AgentSession {
             return { ...text(`request_login failed: ${msg}`), isError: true };
           }
         },
-      },
+      }),
 
-      start_loop: {
+      start_loop: tool({
         description: "Open a recorded cloud browser at the start URL and begin the loopa. Returns the initial page observation. Only call after the user confirmed the plan.",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: jsonSchema<any>({ type: "object", properties: {} }),
+        toModelOutput: toolResultToModelOutput,
         execute: async (): Promise<ToolResult> => {
           this.noteToolCall("roll");
           if (!this.params) return { ...text("No loopa params saved — call set_loop_params first."), isError: true };
@@ -520,11 +524,11 @@ export class AgentSession {
             return { ...text(`start_loop failed: ${msg}`), isError: true };
           }
         },
-      },
+      }),
 
-      browser_action: {
+      browser_action: tool({
         description: "Perform exactly ONE recorded browser action toward the goal. For click/type/hover, set target_index from the latest ELEMENTS list. Include a short viewer-facing caption.",
-        inputSchema: {
+        inputSchema: jsonSchema<any>({
           type: "object",
           properties: {
             action: { type: "string", enum: ["goto", "click", "type", "hover", "scroll", "wait"] },
@@ -536,7 +540,8 @@ export class AgentSession {
             caption: { type: "string" },
           },
           required: ["action"],
-        },
+        }),
+        toModelOutput: toolResultToModelOutput,
         execute: async (args: any): Promise<ToolResult> => {
           this.noteToolCall("action");
           if (!this.browser || !this.job) return { ...text("No loopa in progress — call start_loop first."), isError: true };
@@ -581,11 +586,12 @@ export class AgentSession {
             observation: observationText(this.lastObs),
           }));
         },
-      },
+      }),
 
-      observe_page: {
+      observe_page: tool({
         description: "Re-observe the current page (elements list + screenshot). Only needed if the latest list is stale.",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: jsonSchema<any>({ type: "object", properties: {} }),
+        toModelOutput: toolResultToModelOutput,
         execute: async (): Promise<ToolResult> => {
           this.noteToolCall("observe");
           if (!this.browser) return { ...text("No loopa in progress."), isError: true };
@@ -597,15 +603,15 @@ export class AgentSession {
             ],
           };
         },
-      },
+      }),
 
-      finish_loop: {
+      finish_loop: tool({
         description:
           "Stop recording and produce the final MP4. Call when the goal is visibly achieved. " +
           "Pass 2-5 broad sections grouping the steps into viewer-facing arcs — they become the " +
           "video's chapter list. Section titles are scene names ('Finding the product'), not " +
           "step-by-step captions.",
-        inputSchema: {
+        inputSchema: jsonSchema<any>({
           type: "object",
           properties: {
             title: { type: "string", description: "Short video title" },
@@ -623,7 +629,8 @@ export class AgentSession {
             },
           },
           required: ["title"],
-        },
+        }),
+        toModelOutput: toolResultToModelOutput,
         execute: async (args: any): Promise<ToolResult> => {
           this.noteToolCall("wrap");
           if (!this.browser || !this.job || !this.params) {
@@ -756,16 +763,17 @@ export class AgentSession {
             return { ...text(`finish_loop failed: ${msg}`), isError: true };
           }
         },
-      },
+      }),
 
-      abort_loop: {
+      abort_loop: tool({
         description:
           "Abort the current recording WITHOUT producing a video — e.g. a login wall or broken page blocks the goal. Explain what happened to the user afterwards.",
-        inputSchema: {
+        inputSchema: jsonSchema<any>({
           type: "object",
           properties: { reason: { type: "string", description: "Short reason, shown to the user." } },
           required: ["reason"],
-        },
+        }),
+        toModelOutput: toolResultToModelOutput,
         execute: async (args: any): Promise<ToolResult> => {
           this.noteToolCall("cut");
           if (!this.job) return { ...text("No loopa in progress."), isError: true };
@@ -775,7 +783,7 @@ export class AgentSession {
             next: "Tell the user why. If a login was required, offer request_login and a re-record.",
           }));
         },
-      },
+      }),
     };
   }
 
@@ -785,10 +793,6 @@ export class AgentSession {
     this.loginResolve = null;
     await this.browser?.close().catch(() => {});
     this.browser = null;
-    try {
-      await this.agent?.[Symbol.asyncDispose]?.();
-    } catch {}
-    this.agent = null;
   }
 
   /** Fail any open job and release the browser/agent (used on server shutdown). */
@@ -802,11 +806,12 @@ export class AgentSession {
 const sessions: Map<string, AgentSession> = ((globalThis as any).__loopaSessions ??= new Map());
 
 /**
- * Self-heal for a failure mode observed twice in prod: after hours of uptime,
- * every Cursor run — including on freshly created agents — fails within ~1s
- * with no output, and only a process restart clears it. After two such
- * instant failures inside 5 minutes, exit non-zero (Fly's restart policy
- * brings the machine back in seconds) — but never while a recording is live.
+ * Self-heal kept from the Cursor SDK era, where after hours of uptime every
+ * agent run failed within ~1s with no output until a process restart. Requests
+ * are stateless HTTPS calls now, so this should never fire — if it does, that
+ * points at process-global rot worth investigating. After two no-output
+ * failures inside 5 minutes, exit non-zero (Fly's restart policy brings the
+ * machine back in seconds) — but never while a recording is live.
  * Returns true when a restart has been scheduled.
  */
 const instantFailures: number[] = [];

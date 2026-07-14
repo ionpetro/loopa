@@ -18,9 +18,9 @@ function jsonError(message: string, status: number): Response {
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  if (!process.env.CURSOR_API_KEY || !process.env.KERNEL_API_KEY) {
+  if (!process.env.OPENAI_API_KEY || !process.env.KERNEL_API_KEY) {
     return jsonError(
-      "Set CURSOR_API_KEY and KERNEL_API_KEY in the deployment environment, then redeploy.",
+      "Set OPENAI_API_KEY and KERNEL_API_KEY in the deployment environment, then redeploy.",
       500,
     );
   }

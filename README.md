@@ -29,7 +29,7 @@ You ──chat──▶ Cursor SDK agent (composer-2.5)
 ## Setup
 
 ```bash
-cp .env.example .env   # fill in CURSOR_API_KEY + KERNEL_API_KEY
+cp .env.example .env   # fill in OPENAI_API_KEY + KERNEL_API_KEY
 npm install
 npm run dev
 ```

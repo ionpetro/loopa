@@ -173,13 +173,10 @@ function ChatMessageView({ message }: { message: ChatMessage }) {
 
 const COMPOSE_STAGES = ["processing frames", "printing captions", "encoding cut", "uploading to storage"];
 
-/** Curated slice of the Cursor model catalog (all billed via CURSOR_API_KEY). */
+/** Models served via the AI SDK (billed via OPENAI_API_KEY; claude-* ids route to ANTHROPIC_API_KEY when set). */
 const MODELS = [
-  { id: "composer-2.5", label: "Composer 2.5" },
   { id: "gpt-5.5", label: "GPT-5.5" },
-  { id: "claude-sonnet-5", label: "Sonnet 5" },
-  { id: "claude-opus-4-8", label: "Opus 4.8" },
-  { id: "gemini-3.1-pro", label: "Gemini 3.1 Pro" },
+  { id: "gpt-5.4", label: "GPT-5.4" },
   { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
 ];
 

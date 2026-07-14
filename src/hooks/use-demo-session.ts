@@ -89,7 +89,7 @@ export function useLoopaSession() {
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
   const [recStart, setRecStart] = useState<number | null>(null);
-  const [model, setModel] = useState("composer-2.5");
+  const [model, setModel] = useState("gpt-5.5");
 
   const sessionIdRef = useRef<string | null>(null);
   const busyRef = useRef(false);

@@ -11,7 +11,6 @@ import { disposeAllSessions, getOrCreateSession, getSession } from "../src/engin
 import { failStaleWork, flushDb } from "../src/engine/db.ts";
 import type { SessionEvent } from "../src/engine/types.ts";
 import { jobDir, sweepOldJobDirs } from "../src/engine/jobs.ts";
-import { sweepSdkAgentStore } from "../src/engine/sdk-store.ts";
 import { failAllActiveRuns, loadLoopaRun } from "../src/engine/headless-run.ts";
 import { listUserJobs, loadJobRecord } from "../src/engine/db.ts";
 import { getAuthor } from "../src/engine/author.ts";
@@ -199,8 +198,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
       json(res, 405, { jsonrpc: "2.0", error: { code: -32000, message: "Method not allowed" }, id: null }, origin);
       return;
     }
-    if (!process.env.CURSOR_API_KEY || !process.env.KERNEL_API_KEY) {
-      json(res, 500, { error: "CURSOR_API_KEY and KERNEL_API_KEY must be set on the server." }, origin);
+    if (!process.env.OPENAI_API_KEY || !process.env.KERNEL_API_KEY) {
+      json(res, 500, { error: "OPENAI_API_KEY and KERNEL_API_KEY must be set on the server." }, origin);
       return;
     }
     let body: unknown;
@@ -302,8 +301,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 
   const sessionMatch = pathname.match(/^\/api\/session\/(sess-[a-z0-9-]+)$/);
   if (req.method === "POST" && sessionMatch) {
-    if (!process.env.CURSOR_API_KEY || !process.env.KERNEL_API_KEY) {
-      json(res, 500, { error: "CURSOR_API_KEY and KERNEL_API_KEY must be set on the server." }, origin);
+    if (!process.env.OPENAI_API_KEY || !process.env.KERNEL_API_KEY) {
+      json(res, 500, { error: "OPENAI_API_KEY and KERNEL_API_KEY must be set on the server." }, origin);
       return;
     }
 
@@ -452,7 +451,6 @@ server.listen(boundPort, () => {
   log.info("http", `loopa backend listening on :${boundPort}`);
   // Reclaim disk from old job dirs left by prior processes on this box.
   sweepOldJobDirs();
-  sweepSdkAgentStore();
   // Boot reconciliation: a hard crash (OOM/SIGKILL) skips graceful shutdown,
   // leaving DB rows stuck in "recording"/"composing" while pollers see 202
   // forever. Nothing from a previous process can still be running.
