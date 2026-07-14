@@ -175,6 +175,7 @@ const COMPOSE_STAGES = ["processing frames", "printing captions", "encoding cut"
 
 /** Models served via the AI SDK (billed via OPENAI_API_KEY; claude-* ids route to ANTHROPIC_API_KEY when set). */
 const MODELS = [
+  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
   { id: "gpt-5.5", label: "GPT-5.5" },
   { id: "gpt-5.4", label: "GPT-5.4" },
   { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
