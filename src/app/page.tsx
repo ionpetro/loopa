@@ -40,7 +40,6 @@ import { StudioHeader } from "@/components/studio-header";
 import { LoopaPlayer } from "@/components/demo-player";
 import { LoopaLoader } from "@/components/loopa-loader";
 import { useLoopaSession, type ChatMessage, type ChatPart } from "@/hooks/use-demo-session";
-import { apiBase } from "@/lib/api-base";
 import { cn } from "@/lib/utils";
 
 function fmtTimecode(ms: number): string {
@@ -68,11 +67,12 @@ function Timecode({ ms }: { ms: number }) {
   );
 }
 
+// Setup text handed to an external agent — always the canonical public URL,
+// regardless of which API base this frontend build talks to.
 function agentInstructions(): string {
-  const base = apiBase() || "https://api.loopa.sh";
   return `I'd like you to set up loopa.sh: a cloud agent recorder for browser loopas.
 
-Add the MCP server: ${base}/mcp
+Add the MCP server: https://api.loopa.sh/mcp
 
 Install the /record-loopa skill: npx skills add ionpetro/loopa
 
