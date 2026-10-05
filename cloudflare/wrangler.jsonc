@@ -1,0 +1,38 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "loopa-backend",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-04",
+  "observability": { "enabled": true },
+  "preview_urls": false,
+  // api.loopa.sh is a Worker custom domain: Cloudflare creates its DNS record
+  // and certificate on deploy (the loopa.sh zone lives on Cloudflare).
+  "routes": [{ "pattern": "api.loopa.sh", "custom_domain": true }],
+
+  // The backend is one stateful Node process (sessions + jobs in memory, ffmpeg
+  // on local disk), so there is exactly one container. 1 dedicated vCPU keeps
+  // ffmpeg encodes from stalling the way Fly's burstable shared CPU did.
+  "containers": [
+    {
+      "class_name": "LoopaBackend",
+      "image": "../backend/Dockerfile",
+      "image_build_context": "..",
+      "instance_type": "standard-2",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "LOOPA", "class_name": "LoopaBackend" }]
+  },
+  "exports": {
+    "LoopaBackend": { "type": "durable-object", "storage": "sqlite" }
+  },
+
+  // Non-secret config. Secrets (API keys, DB URL) are set with
+  // `wrangler secret bulk` and listed in SECRET_NAMES in src/index.ts.
+  "vars": {
+    "PUBLIC_URL": "https://api.loopa.sh",
+    "FRONTEND_URL": "https://loopa.sh",
+    "DAILY_RUN_LIMIT": "50"
+  }
+}

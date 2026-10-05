@@ -10,8 +10,8 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { disposeAllSessions, getOrCreateSession, getSession } from "../src/engine/agent-session.ts";
 import { failStaleWork, flushDb } from "../src/engine/db.ts";
 import type { SessionEvent } from "../src/engine/types.ts";
-import { jobDir, sweepOldJobDirs } from "../src/engine/jobs.ts";
-import { failAllActiveRuns, loadLoopaRun } from "../src/engine/headless-run.ts";
+import { activeJobCount, jobDir, sweepOldJobDirs } from "../src/engine/jobs.ts";
+import { activeRunCount, failAllActiveRuns, loadLoopaRun } from "../src/engine/headless-run.ts";
 import { listUserJobs, loadJobRecord } from "../src/engine/db.ts";
 import { getAuthor } from "../src/engine/author.ts";
 import { log } from "../src/engine/log.ts";
@@ -142,7 +142,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   }
 
   if (req.method === "GET" && pathname === "/health") {
-    json(res, 200, { ok: true }, origin);
+    // `busy` lets the Cloudflare container host skip its idle shutdown mid-recording.
+    json(res, 200, { ok: true, busy: activeJobCount() + activeRunCount() }, origin);
     return;
   }
 
@@ -480,5 +481,10 @@ async function shutdown(signal: string) {
     setTimeout(() => process.exit(0), 1_000).unref();
   }
 }
+// A stray socket error (e.g. a TLS connection to Supabase or Kernel dropping)
+// must not take down every in-flight recording with it.
+process.on("uncaughtException", (err) => log.error("process", "uncaught exception", err));
+process.on("unhandledRejection", (err) => log.error("process", "unhandled rejection", err));
+
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));

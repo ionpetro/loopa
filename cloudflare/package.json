@@ -1,0 +1,19 @@
+{
+  "name": "loopa-cloudflare",
+  "private": true,
+  "description": "Cloudflare Worker + Container that hosts the loopa backend (backend/Dockerfile)",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "types": "wrangler types"
+  },
+  "devDependencies": {
+    "@cloudflare/containers": "^0.3.7",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.147.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "workerd@1.20261001.1": true
+  }
+}

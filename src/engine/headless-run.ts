@@ -288,6 +288,13 @@ export function confirmRunLogin(id: string, viewerUserId?: string): { ok: true }
   return { ok: true };
 }
 
+/** In-flight (incl. queued) runs across all users (keeps the container awake while > 0). */
+export function activeRunCount(): number {
+  let n = 0;
+  for (const r of runs.values()) if (r.status !== "done" && r.status !== "error") n++;
+  return n;
+}
+
 /** In-flight (incl. queued) runs owned by a user (quota enforcement). */
 export function activeRunCountFor(userId: string): number {
   let n = 0;

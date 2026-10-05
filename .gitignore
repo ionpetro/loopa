@@ -18,3 +18,6 @@ certificates/
 # Locally installed third-party skills (npx skills add) — not part of loopa
 .agents/skills/clerk
 .agents/skills/clerk-*
+
+# Cloudflare API token for DNS/zone scripts (never commit)
+cloudflare/.cf-token

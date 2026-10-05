@@ -1,4 +1,6 @@
+# Build context for backend/Dockerfile is the repo root.
 node_modules
+**/node_modules
 .next
 .git
 data
@@ -7,3 +9,8 @@ tsconfig.tsbuildinfo
 public
 scripts
 skills
+certificates
+cloudflare
+.claude
+.agents
+cursor-plugin
